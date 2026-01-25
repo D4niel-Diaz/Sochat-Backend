@@ -3,7 +3,7 @@
 
 # Environment files
 .env
-.env.*             # covers production, staging, local, backups
+.env.*             
 .env.backup
 .env.production
 /auth.json
@@ -31,7 +31,7 @@ Thumbs.db
 /public/build
 /public/hot
 /public/storage/*
-!/public/storage/.gitignore   # keep empty folder structure
+!/public/storage/.gitignore  
 
 # Storage / sensitive keys
 /storage/*.key
