@@ -8,7 +8,7 @@ return [
 
     'allowed_origins' => [
         env('FRONTEND_URL', 'http://localhost:5173'),
-        env('FRONTEND_URL_PROD', 'http://localhost:5174'),
+        env('FRONTEND_URL_PROD', 'https://sochat-frontend.vercel.app'),
         'http://localhost:5175',
         'http://127.0.0.1:5175',
     ],
