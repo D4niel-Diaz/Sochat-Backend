@@ -59,3 +59,6 @@ tmp/
 *.sql
 *.sqlite
 *.dump
+
+# Documentation
+docs/
