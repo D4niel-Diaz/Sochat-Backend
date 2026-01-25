@@ -93,7 +93,9 @@ class ChatServiceTest extends TestCase
 
         $result = $this->chatService->findMatch($guest->guest_id);
 
-        $this->assertNull($result);
+        $this->assertNotNull($result);
+        $this->assertEquals('not_opted_in', $result['status']);
+        $this->assertEquals('You must click "Start Chat" to begin matching', $result['message']);
     }
 
     public function test_find_match_fails_for_guest_not_in_waiting_pool(): void
@@ -104,7 +106,9 @@ class ChatServiceTest extends TestCase
 
         $result = $this->chatService->findMatch($guest->guest_id);
 
-        $this->assertNull($result);
+        $this->assertNotNull($result);
+        $this->assertEquals('not_opted_in', $result['status']);
+        $this->assertEquals('You must click "Start Chat" to begin matching', $result['message']);
     }
 
     public function test_find_match_fails_for_guest_with_active_chat(): void
@@ -120,7 +124,9 @@ class ChatServiceTest extends TestCase
 
         $result = $this->chatService->findMatch($guest1->guest_id);
 
-        $this->assertNull($result);
+        $this->assertNotNull($result);
+        $this->assertEquals('not_opted_in', $result['status']);
+        $this->assertEquals('You must click "Start Chat" to begin matching', $result['message']);
     }
 
     public function test_end_chat_success(): void

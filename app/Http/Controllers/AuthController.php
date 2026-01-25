@@ -18,7 +18,9 @@ class AuthController extends Controller
 
             if (Auth::guard('admin')->attempt($credentials)) {
                 $admin = Auth::guard('admin')->user();
-                $request->session()->regenerate();
+
+                // Generate a simple token (for development/testing)
+                $token = base64_encode($admin->id . ':' . $admin->email . ':' . time());
 
                 return response()->json([
                     'success' => true,
@@ -28,6 +30,7 @@ class AuthController extends Controller
                         'name' => $admin->name,
                         'email' => $admin->email,
                         'role' => $admin->role,
+                        'token' => $token,
                     ],
                 ]);
             }

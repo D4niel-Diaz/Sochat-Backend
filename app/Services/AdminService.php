@@ -31,7 +31,7 @@ class AdminService
         return [
             'online_users' => app(\App\Services\PresenceService::class)->countOnlineUsers(),
             'active_chats' => $this->chatRepository->countActiveChats(),
-            'total_reports' => $this->reportRepository->countPendingReports(),
+            'pending_reports' => $this->reportRepository->countPendingReports(),
             'banned_users' => $this->guestRepository->getBannedGuests()->count(),
         ];
     }

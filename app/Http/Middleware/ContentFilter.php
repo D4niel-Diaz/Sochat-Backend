@@ -13,20 +13,24 @@ class ContentFilter
     {
         if ($request->has('content') || $request->has('message')) {
             $content = $request->input('content') ?? $request->input('message');
-            $filteredContent = $this->filterContent($content);
 
-            if ($filteredContent !== $content) {
-                $request->merge([
-                    'content' => $filteredContent,
-                    'message' => $filteredContent,
-                ]);
-            }
+            // Only filter if content is not null
+            if ($content !== null && $content !== '') {
+                $filteredContent = $this->filterContent($content);
 
-            if ($this->detectPersonalInfo($filteredContent)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Message contains personal information and cannot be sent',
-                ], 400);
+                if ($filteredContent !== $content) {
+                    $request->merge([
+                        'content' => $filteredContent,
+                        'message' => $filteredContent,
+                    ]);
+                }
+
+                if ($this->detectPersonalInfo($filteredContent)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Message contains personal information and cannot be sent',
+                    ], 400);
+                }
             }
         }
 

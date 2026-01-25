@@ -14,42 +14,49 @@ return new class extends Migration
             $table->dropUnique('unique_chat_pair');
         });
 
-        // Create trigger to normalize guest IDs before insert
+        // Create trigger to normalize guest IDs before insert (MySQL only)
         // This ensures (guest_id_1, guest_id_2) is always sorted alphabetically
-        DB::unprepared('
-            DROP TRIGGER IF EXISTS normalize_chat_pair;
-            
-            CREATE TRIGGER normalize_chat_pair
-            BEFORE INSERT ON chats
-            FOR EACH ROW
-            BEGIN
-                DECLARE temp_id VARCHAR(36);
-                
-                IF NEW.guest_id_1 > NEW.guest_id_2 THEN
-                    SET temp_id = NEW.guest_id_1;
-                    SET NEW.guest_id_1 = NEW.guest_id_2;
-                    SET NEW.guest_id_2 = temp_id;
-                END IF;
-            END;
-        ');
+        // Skip for SQLite as normalization is handled differently
+        if (DB::connection()->getDriverName() === 'mysql') {
+            try {
+                DB::unprepared('
+                    DROP TRIGGER IF EXISTS normalize_chat_pair;
 
-        // Create trigger for updates as well
-        DB::unprepared('
-            DROP TRIGGER IF EXISTS normalize_chat_pair_update;
-            
-            CREATE TRIGGER normalize_chat_pair_update
-            BEFORE UPDATE ON chats
-            FOR EACH ROW
-            BEGIN
-                DECLARE temp_id VARCHAR(36);
-                
-                IF NEW.guest_id_1 > NEW.guest_id_2 THEN
-                    SET temp_id = NEW.guest_id_1;
-                    SET NEW.guest_id_1 = NEW.guest_id_2;
-                    SET NEW.guest_id_2 = temp_id;
-                END IF;
-            END;
-        ');
+                    CREATE TRIGGER normalize_chat_pair
+                    BEFORE INSERT ON chats
+                    FOR EACH ROW
+                    BEGIN
+                        DECLARE temp_id VARCHAR(36);
+
+                        IF NEW.guest_id_1 > NEW.guest_id_2 THEN
+                            SET temp_id = NEW.guest_id_1;
+                            SET NEW.guest_id_1 = NEW.guest_id_2;
+                            SET NEW.guest_id_2 = temp_id;
+                        END IF;
+                    END;
+                ');
+
+                // Create trigger for updates as well
+                DB::unprepared('
+                    DROP TRIGGER IF EXISTS normalize_chat_pair_update;
+
+                    CREATE TRIGGER normalize_chat_pair_update
+                    BEFORE UPDATE ON chats
+                    FOR EACH ROW
+                    BEGIN
+                        DECLARE temp_id VARCHAR(36);
+
+                        IF NEW.guest_id_1 > NEW.guest_id_2 THEN
+                            SET temp_id = NEW.guest_id_1;
+                            SET NEW.guest_id_1 = NEW.guest_id_2;
+                            SET NEW.guest_id_2 = temp_id;
+                        END IF;
+                    END;
+                ');
+            } catch (\Exception $e) {
+                // Ignore errors if triggers already exist
+            }
+        }
 
         // Add unique constraint back (now works bidirectionally)
         Schema::table('chats', function (Blueprint $table) {
@@ -63,8 +70,15 @@ return new class extends Migration
             $table->dropUnique('unique_chat_pair');
         });
 
-        DB::unprepared('DROP TRIGGER IF EXISTS normalize_chat_pair');
-        DB::unprepared('DROP TRIGGER IF EXISTS normalize_chat_pair_update');
+        // Drop triggers (MySQL only)
+        if (DB::connection()->getDriverName() === 'mysql') {
+            try {
+                DB::unprepared('DROP TRIGGER IF EXISTS normalize_chat_pair');
+                DB::unprepared('DROP TRIGGER IF EXISTS normalize_chat_pair_update');
+            } catch (\Exception $e) {
+                // Ignore errors
+            }
+        }
 
         Schema::table('chats', function (Blueprint $table) {
             $table->unique(['guest_id_1', 'guest_id_2'], 'unique_chat_pair');

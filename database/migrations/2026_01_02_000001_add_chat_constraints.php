@@ -18,18 +18,31 @@ return new class extends Migration
             $table->index(['status', 'ended_at'], 'idx_status_ended_at');
         });
 
-        // Create a stored procedure to check for self-matching
-        DB::unprepared('
-            CREATE TRIGGER prevent_self_matching
-            BEFORE INSERT ON chats
-            FOR EACH ROW
-            BEGIN
-                IF NEW.guest_id_1 = NEW.guest_id_2 THEN
-                    SIGNAL SQLSTATE "45000" 
-                    SET MESSAGE_TEXT = "Cannot create chat with same guest";
-                END IF;
-            END;
-        ');
+        // Create a trigger to check for self-matching
+        // Use different syntax for MySQL vs SQLite
+        if (DB::connection()->getDriverName() === 'mysql') {
+            DB::unprepared('
+                CREATE TRIGGER prevent_self_matching
+                BEFORE INSERT ON chats
+                FOR EACH ROW
+                BEGIN
+                    IF NEW.guest_id_1 = NEW.guest_id_2 THEN
+                        SIGNAL SQLSTATE "45000"
+                        SET MESSAGE_TEXT = "Cannot create chat with same guest";
+                    END IF;
+                END;
+            ');
+        } else {
+            // SQLite syntax
+            DB::unprepared('
+                CREATE TRIGGER prevent_self_matching
+                BEFORE INSERT ON chats
+                WHEN NEW.guest_id_1 = NEW.guest_id_2
+                BEGIN
+                    SELECT RAISE(ABORT, "Cannot create chat with same guest");
+                END;
+            ');
+        }
     }
 
     public function down(): void
