@@ -44,7 +44,9 @@ return new class extends Migration
         // Drop existing trigger first to avoid conflicts
         DB::unprepared('DROP TRIGGER IF EXISTS prevent_self_matching ON chats');
 
-        if (DB::connection()->getDriverName() === 'mysql') {
+        $driver = DB::connection()->getDriverName();
+
+        if ($driver === 'mysql') {
             DB::unprepared('
                 CREATE TRIGGER prevent_self_matching
                 BEFORE INSERT ON chats
@@ -55,6 +57,23 @@ return new class extends Migration
                         SET MESSAGE_TEXT = "Cannot create chat with same guest";
                     END IF;
                 END;
+            ');
+        } elseif ($driver === 'pgsql') {
+            DB::unprepared('
+                CREATE OR REPLACE FUNCTION prevent_self_matching()
+                RETURNS TRIGGER AS $$
+                BEGIN
+                    IF NEW.guest_id_1 = NEW.guest_id_2 THEN
+                        RAISE EXCEPTION \'Cannot create chat with same guest\';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                CREATE TRIGGER prevent_self_matching
+                BEFORE INSERT ON chats
+                FOR EACH ROW
+                EXECUTE FUNCTION prevent_self_matching();
             ');
         } else {
             // SQLite syntax
