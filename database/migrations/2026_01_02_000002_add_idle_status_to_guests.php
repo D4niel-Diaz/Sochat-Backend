@@ -10,8 +10,23 @@ return new class extends Migration
     public function up(): void
     {
         // PostgreSQL doesn't support altering enum types directly
-        // Use raw SQL to add 'idle' to the enum
-        DB::statement("ALTER TYPE guests_status_enum ADD VALUE 'idle' BEFORE 'banned'");
+        // Get the actual enum type name from the database
+        $enumTypeName = DB::select("
+            SELECT typname 
+            FROM pg_type 
+            WHERE typname LIKE '%guests%status%'
+            AND typtype = 'e'
+            LIMIT 1
+        ");
+
+        if ($enumTypeName) {
+            $typeName = $enumTypeName[0]->typname;
+            DB::statement("ALTER TYPE {$typeName} ADD VALUE 'idle' BEFORE 'banned'");
+        } else {
+            // Fallback: Recreate the column with the new enum
+            DB::statement("ALTER TABLE guests ALTER COLUMN status TYPE VARCHAR(255)");
+            DB::statement("ALTER TABLE guests ADD CONSTRAINT check_status CHECK (status IN ('waiting', 'active', 'idle', 'banned'))");
+        }
     }
 
     public function down(): void
