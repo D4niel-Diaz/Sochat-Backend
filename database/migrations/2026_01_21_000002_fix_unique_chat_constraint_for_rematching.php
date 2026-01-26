@@ -42,7 +42,7 @@ return new class extends Migration
 
         // Add a trigger to prevent self-matching
         // Drop existing trigger first to avoid conflicts
-        DB::unprepared('DROP TRIGGER IF EXISTS prevent_self_matching');
+        DB::unprepared('DROP TRIGGER IF EXISTS prevent_self_matching ON chats');
 
         if (DB::connection()->getDriverName() === 'mysql') {
             DB::unprepared('
@@ -77,7 +77,7 @@ return new class extends Migration
         }
 
         // Drop the self-matching trigger
-        DB::unprepared('DROP TRIGGER IF EXISTS prevent_self_matching');
+        DB::unprepared('DROP TRIGGER IF EXISTS prevent_self_matching ON chats');
 
         // Restore the original unique constraint
         Schema::table('chats', function (Blueprint $table) {
