@@ -9,9 +9,9 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('guests', function (Blueprint $table) {
-            $table->enum('status', ['waiting', 'active', 'idle', 'banned'])->default('waiting')->change();
-        });
+        // PostgreSQL doesn't support altering enum types directly
+        // Use raw SQL to add 'idle' to the enum
+        DB::statement("ALTER TYPE guests_status_enum ADD VALUE 'idle' BEFORE 'banned'");
     }
 
     public function down(): void
@@ -23,8 +23,11 @@ return new class extends Migration
             WHERE status = 'idle'
         ");
 
-        Schema::table('guests', function (Blueprint $table) {
-            $table->enum('status', ['waiting', 'active', 'banned'])->default('waiting')->change();
-        });
+        // PostgreSQL doesn't support removing enum values directly
+        // Create a new enum type without 'idle'
+        DB::statement("ALTER TYPE guests_status_enum RENAME TO guests_status_enum_old");
+        DB::statement("CREATE TYPE guests_status_enum AS ENUM ('waiting', 'active', 'banned')");
+        DB::statement("ALTER TABLE guests ALTER COLUMN status TYPE guests_status_enum USING status::text::guests_status_enum");
+        DB::statement("DROP TYPE guests_status_enum_old");
     }
 };
