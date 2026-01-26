@@ -9,15 +9,26 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('guests', function (Blueprint $table) {
-            // Change enum to include 'idle' status
-            $table->enum('status', ['idle', 'waiting', 'active', 'banned'])
-                  ->default('idle')
-                  ->change();
-        });
+        // PostgreSQL doesn't support altering enum types directly
+        // Get the actual enum type name from the database
+        $enumTypeName = DB::select("
+            SELECT typname 
+            FROM pg_type 
+            WHERE typname LIKE '%guests%status%'
+            AND typtype = 'e'
+            LIMIT 1
+        ");
 
-        // Update existing guests with 'waiting' or 'active' status to remain
-        // Set any guests with invalid status to 'idle'
+        if ($enumTypeName) {
+            $typeName = $enumTypeName[0]->typname;
+            DB::statement("ALTER TYPE {$typeName} ADD VALUE 'idle' BEFORE 'waiting'");
+        } else {
+            // Fallback: Recreate the column with the new enum
+            DB::statement("ALTER TABLE guests ALTER COLUMN status TYPE VARCHAR(255)");
+            DB::statement("ALTER TABLE guests ADD CONSTRAINT check_status CHECK (status IN ('idle', 'waiting', 'active', 'banned'))");
+        }
+
+        // Update existing guests with invalid status to 'idle'
         DB::statement("
             UPDATE guests 
             SET status = 'idle' 
@@ -34,10 +45,22 @@ return new class extends Migration
             WHERE status = 'idle'
         ");
 
-        Schema::table('guests', function (Blueprint $table) {
-            $table->enum('status', ['waiting', 'active', 'banned'])
-                  ->default('waiting')
-                  ->change();
-        });
+        // PostgreSQL doesn't support removing enum values directly
+        // Get the actual enum type name from the database
+        $enumTypeName = DB::select("
+            SELECT typname 
+            FROM pg_type 
+            WHERE typname LIKE '%guests%status%'
+            AND typtype = 'e'
+            LIMIT 1
+        ");
+
+        if ($enumTypeName) {
+            $typeName = $enumTypeName[0]->typname;
+            DB::statement("ALTER TYPE {$typeName} RENAME TO {$typeName}_old");
+            DB::statement("CREATE TYPE {$typeName} AS ENUM ('waiting', 'active', 'banned')");
+            DB::statement("ALTER TABLE guests ALTER COLUMN status TYPE {$typeName} USING status::text::{$typeName}");
+            DB::statement("DROP TYPE {$typeName}_old");
+        }
     }
 };
