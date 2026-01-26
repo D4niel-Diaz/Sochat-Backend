@@ -21,11 +21,32 @@ return new class extends Migration
 
         if ($enumTypeName) {
             $typeName = $enumTypeName[0]->typname;
-            DB::statement("ALTER TYPE {$typeName} ADD VALUE 'idle' BEFORE 'banned'");
+            // Check if 'idle' already exists in the enum
+            $enumValues = DB::select("
+                SELECT enumlabel 
+                FROM pg_enum 
+                WHERE enumtypid = (
+                    SELECT oid FROM pg_type WHERE typname = '{$typeName}'
+                )
+            ");
+            $values = array_column($enumValues, 'enumlabel');
+            
+            if (!in_array('idle', $values)) {
+                DB::statement("ALTER TYPE {$typeName} ADD VALUE 'idle' BEFORE 'banned'");
+            }
         } else {
-            // Fallback: Recreate the column with the new enum
-            DB::statement("ALTER TABLE guests ALTER COLUMN status TYPE VARCHAR(255)");
-            DB::statement("ALTER TABLE guests ADD CONSTRAINT check_status CHECK (status IN ('waiting', 'active', 'idle', 'banned'))");
+            // Fallback: Check if constraint exists before adding
+            $constraintExists = DB::select("
+                SELECT conname 
+                FROM pg_constraint 
+                WHERE conname = 'check_status' 
+                AND conrelid = 'guests'::regclass
+            ");
+            
+            if (!$constraintExists) {
+                DB::statement("ALTER TABLE guests ALTER COLUMN status TYPE VARCHAR(255)");
+                DB::statement("ALTER TABLE guests ADD CONSTRAINT check_status CHECK (status IN ('waiting', 'active', 'idle', 'banned'))");
+            }
         }
     }
 
