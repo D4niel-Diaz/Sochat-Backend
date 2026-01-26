@@ -11,7 +11,7 @@ class GuestRepository
     {
         return Guest::create([
             'ip_address' => $ipAddress,
-            'status' => 'idle',
+            'status' => 'waiting',
             'expires_at' => now()->addHours($ttlHours),
         ]);
     }
