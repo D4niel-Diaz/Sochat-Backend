@@ -30,5 +30,5 @@ RUN mkdir -p storage/framework/{cache,data,sessions,views} bootstrap/cache \
 # Expose Render port
 EXPOSE 8080
 
-# Run migrations, seed database, clear caches, and start PHP built-in server
-CMD sh -c "php artisan migrate --force && php artisan db:seed --force && php artisan optimize:clear || true; php -S 0.0.0.0:${PORT:-8080} -t public"
+# Run migrations and start PHP built-in server
+CMD sh -c "php artisan migrate --force; php -S 0.0.0.0:${PORT:-8080} -t public"
