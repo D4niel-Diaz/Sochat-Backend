@@ -2,15 +2,23 @@
 
 return [
 
-    'paths' => ['api/*', 'sanctum/csrf-cookie'],
+    'paths' => [
+        'api/*',
+        'sanctum/csrf-cookie',
+    ],
 
-    'allowed_methods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    'allowed_methods' => [
+        'GET',
+        'POST',
+        'PUT',
+        'PATCH',
+        'DELETE',
+        'OPTIONS',
+    ],
 
     'allowed_origins' => [
-        env('FRONTEND_URL', 'http://localhost:5173'),
-        env('FRONTEND_URL_PROD', 'http://localhost:5174'),
-        'http://localhost:5175',
-        'http://127.0.0.1:5175',
+        env('FRONTEND_URL'),
+        env('FRONTEND_URL_PROD'),
     ],
 
     'allowed_origins_patterns' => [],
@@ -34,5 +42,4 @@ return [
     'max_age' => 86400,
 
     'supports_credentials' => true,
-
 ];
