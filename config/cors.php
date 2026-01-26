@@ -19,9 +19,16 @@ return [
     'allowed_origins' => [
         env('FRONTEND_URL'),
         env('FRONTEND_URL_PROD'),
+        'https://sochat-frontend-63y4.vercel.app',
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
     ],
 
-    'allowed_origins_patterns' => [],
+    'allowed_origins_patterns' => [
+        'https://sochat-frontend-63y4.vercel.app',
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+    ],
 
     'allowed_headers' => [
         'Content-Type',
