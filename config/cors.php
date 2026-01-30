@@ -21,6 +21,7 @@ return [
         env('FRONTEND_URL_PROD'),
         'https://sochat-frontend-63y4.vercel.app',
         'https://sochat-frontend.vercel.app',
+        'https://sochat-livid.vercel.app',
         'https://sochat-git-main-daniels-projects-8c2bbb7b.vercel.app',
         'http://localhost:5173',
         'http://127.0.0.1:5173',
@@ -29,6 +30,7 @@ return [
     ],
 
     'allowed_origins_patterns' => [
+        'https://sochat-*.vercel.app',
         'https://sochat-frontend-*.vercel.app',
         'https://sochat-git-*.vercel.app',
         'https://*.vercel.app',
