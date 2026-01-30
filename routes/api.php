@@ -43,7 +43,10 @@ Route::prefix('v1')->group(function () {
 
     // Broadcasting authentication for WebSocket/Reverb
     Route::post('/broadcasting/auth', function () {
-        return response()->json(['auth' => true]);
+        return response()->json([
+            'success' => false,
+            'message' => 'Broadcasting authentication is disabled'
+        ], 404);
     })->middleware('auth.guest');
 
     Route::prefix('admin')->middleware(['auth.admin'])->group(function () {
