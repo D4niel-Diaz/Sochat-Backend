@@ -153,9 +153,25 @@ class ChatController extends Controller
 
     public function send(Request $request): JsonResponse
     {
+        // CRITICAL: Enhanced input validation
         $validator = Validator::make($request->all(), [
-            'chat_id' => 'required|integer|exists:chats,chat_id',
-            'content' => 'required|string|max:1000',
+            'chat_id' => 'required|integer|exists:chats,chat_id|min:1',
+            'content' => [
+                'required',
+                'string',
+                'min:1', // Ensure non-empty
+                'max:1000',
+                function ($attribute, $value, $fail) {
+                    // Reject empty or whitespace-only content
+                    if (trim($value) === '') {
+                        $fail('Message content cannot be empty.');
+                    }
+                    // Reject content that's only whitespace
+                    if (strlen(trim($value)) === 0) {
+                        $fail('Message content cannot be only whitespace.');
+                    }
+                },
+            ],
         ]);
 
         if ($validator->fails()) {
