@@ -51,7 +51,90 @@ class ChatController extends Controller
             ], 401);
         }
 
-        $result = $this->chatService->findMatch($guest->guest_id);
+        // Get role, subject, and availability from request, guest record, or presence table
+        $role = $request->input('role');
+        $subject = $request->input('subject');
+        $availability = $request->input('availability');
+
+        // If not in request, try guest record
+        if (!$role) {
+            $role = $guest->role;
+        }
+        if (!$subject) {
+            $subject = $guest->subject;
+        }
+        if (!$availability) {
+            $availability = $guest->availability;
+        }
+
+        // If still not found, try presence table
+        if (!$role || !$subject || !$availability) {
+            $presence = \Illuminate\Support\Facades\DB::table('presence')
+                ->where('guest_id', $guest->guest_id)
+                ->first();
+            
+            if ($presence) {
+                if (!$role) {
+                    $role = $presence->role;
+                }
+                if (!$subject) {
+                    $subject = $presence->subject;
+                }
+                if (!$availability) {
+                    $availability = $presence->availability ? json_decode($presence->availability, true) : null;
+                }
+            }
+        }
+
+        // Validate matching parameters
+        if (!$role || !in_array($role, ['tutor', 'learner'])) {
+            \Illuminate\Support\Facades\Log::warning('Match attempt without role', [
+                'guest_id' => $guest->guest_id,
+                'guest_role' => $guest->role,
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Role is required. Please opt in to matching first with role, subject, and availability.',
+            ], 422);
+        }
+
+        if (!$subject || empty(trim($subject))) {
+            \Illuminate\Support\Facades\Log::warning('Match attempt without subject', [
+                'guest_id' => $guest->guest_id,
+                'guest_subject' => $guest->subject,
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Subject is required. Please opt in to matching first with role, subject, and availability.',
+            ], 422);
+        }
+
+        if (!$availability || !is_array($availability) || empty($availability)) {
+            \Illuminate\Support\Facades\Log::warning('Match attempt without availability', [
+                'guest_id' => $guest->guest_id,
+                'guest_availability' => $guest->availability,
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Availability is required. Please opt in to matching first with role, subject, and availability.',
+            ], 422);
+        }
+
+        // Update guest if new values provided
+        if ($request->has('role') || $request->has('subject') || $request->has('availability')) {
+            $guest->update([
+                'role' => $role,
+                'subject' => $subject,
+                'availability' => $availability,
+            ]);
+        }
+
+        $result = $this->chatService->findMatch(
+            $guest->guest_id,
+            $role,
+            $subject,
+            $availability
+        );
 
         if (!$result) {
             return response()->json([
@@ -65,7 +148,7 @@ class ChatController extends Controller
             'data' => $result,
             'message' => $result['status'] === 'matched' 
                 ? 'Chat started successfully' 
-                : 'Waiting for a match',
+                : ($result['message'] ?? 'Waiting for a match'),
         ]);
     }
 

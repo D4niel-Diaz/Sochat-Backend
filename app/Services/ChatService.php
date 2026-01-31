@@ -22,7 +22,7 @@ class ChatService
         $this->presenceService = $presenceService;
     }
 
-    public function findMatch(string $guestId): ?array
+    public function findMatch(string $guestId, ?string $role = null, ?string $subject = null, ?array $availability = null): ?array
     {
         // STEP 1: Validate current user
         $guest = $this->guestRepository->findByGuestId($guestId);
@@ -41,7 +41,7 @@ class ChatService
             Log::warning('Match attempt failed: User has not opted in', ['guest_id' => $guestId]);
             return [
                 'status' => 'not_opted_in',
-                'message' => 'You must click "Start Chat" to begin matching'
+                'message' => 'You must click "Find Match" to begin matching'
             ];
         }
 
@@ -54,7 +54,24 @@ class ChatService
             ];
         }
 
-        // STEP 4: Check for existing active chat BEFORE any state changes
+        // STEP 4: Validate matching parameters (with defaults for simplified matching)
+        // Role is optional now (simplified matching - any user can match with any user)
+        if ($role && !in_array($role, ['tutor', 'learner'])) {
+            $role = 'learner'; // Default to learner if invalid
+        }
+        if (!$role) {
+            $role = 'learner'; // Default to learner if not provided
+        }
+
+        if (!$subject || empty(trim($subject))) {
+            $subject = 'General'; // Default to General if not provided
+        }
+
+        if (!$availability || !is_array($availability) || empty($availability)) {
+            $availability = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18]; // Default availability
+        }
+
+        // STEP 5: Check for existing active chat BEFORE any state changes
         $existingChat = $this->chatRepository->findActiveByGuestId($guestId);
         if ($existingChat) {
             Log::info('Guest already in active chat', [
@@ -68,38 +85,85 @@ class ChatService
             ];
         }
 
-        // STEP 5: Find and lock available match from presence waiting pool
+        // STEP 6: Find and lock available match from presence waiting pool
         // CRITICAL: Use atomic operation with FOR UPDATE to prevent race conditions
+        // NOTE: Matching works for any role combination (simplified for anonymous chat)
         $partnerGuestId = null;
         
         try {
-            $partnerGuestId = DB::transaction(function () use ($guestId) {
-                // Get waiting users with row-level locking
+            $partnerGuestId = DB::transaction(function () use ($guestId, $subject, $availability) {
+                // Get waiting users with matching criteria and row-level locking
+                // Use case-insensitive subject matching
+                // "General" subject matches with any subject
+                // Match any role (simplified matching)
                 $waitingUsers = DB::table('presence')
                     ->where('is_waiting', true)
                     ->where('is_online', true)
                     ->where('expires_at', '>', now())
+                    ->where(function($query) use ($subject) {
+                        // Match if subjects are the same (case-insensitive)
+                        // OR if either subject is "General" (General matches with any)
+                        $query->where(function($q) use ($subject) {
+                            $q->whereRaw('LOWER(subject) = LOWER(?)', [$subject]);
+                        })->orWhere('subject', 'General')
+                          ->orWhereRaw('LOWER(?) = LOWER(subject)', ['General']);
+                    })
                     ->where('guest_id', '!=', $guestId)
                     ->orderBy('last_seen_at', 'asc')
                     ->lockForUpdate()
-                    ->pluck('guest_id')
-                    ->toArray();
+                    ->get();
 
                 Log::info('Match attempt initiated with lock', [
                     'guest_id' => $guestId,
-                    'waiting_users' => count($waitingUsers)
+                    'subject' => $subject,
+                    'waiting_users' => $waitingUsers->count(),
+                    'waiting_user_ids' => $waitingUsers->pluck('guest_id')->toArray()
                 ]);
 
-                if (empty($waitingUsers)) {
-                    Log::info('No match available', [
+                if ($waitingUsers->isEmpty()) {
+                    // Debug: Check what's actually in the presence table
+                    $allWaiting = DB::table('presence')
+                        ->where('is_waiting', true)
+                        ->where('expires_at', '>', now())
+                        ->get();
+                    
+                    Log::info('No match available - debugging', [
                         'guest_id' => $guestId,
-                        'available_users' => 0
+                        'subject' => $subject,
+                        'availability' => $availability,
+                        'available_users' => 0,
+                        'all_waiting_count' => $allWaiting->count(),
+                        'all_waiting' => $allWaiting->map(function($p) {
+                            return [
+                                'guest_id' => $p->guest_id,
+                                'role' => $p->role,
+                                'subject' => $p->subject,
+                                'is_online' => $p->is_online,
+                                'is_waiting' => $p->is_waiting,
+                                'expires_at' => $p->expires_at,
+                            ];
+                        })->toArray()
                     ]);
                     return null;
                 }
 
-                // Find first valid partner
-                foreach ($waitingUsers as $potentialPartnerId) {
+                // Find first valid partner with availability overlap
+                foreach ($waitingUsers as $candidate) {
+                    $candidateAvailability = json_decode($candidate->availability, true) ?? [];
+                    
+                    // CRITICAL: Check availability overlap
+                    $overlap = array_intersect($availability, $candidateAvailability);
+                    if (empty($overlap)) {
+                        Log::info('No availability overlap', [
+                            'guest_id' => $guestId,
+                            'candidate_id' => $candidate->guest_id,
+                            'requested' => $availability,
+                            'candidate' => $candidateAvailability
+                        ]);
+                        continue; // No availability overlap
+                    }
+
+                    $potentialPartnerId = $candidate->guest_id;
                     $partnerGuest = $this->guestRepository->findByGuestId($potentialPartnerId);
 
                     // Skip if partner is invalid or banned
@@ -128,8 +192,14 @@ class ChatService
                         continue;
                     }
 
-                    // Found a valid partner
-                    Log::info('Valid partner found', ['partner_guest_id' => $potentialPartnerId]);
+                    // Found a valid partner with matching criteria
+                    Log::info('Valid partner found with matching criteria', [
+                        'guest_id' => $guestId,
+                        'partner_guest_id' => $potentialPartnerId,
+                        'role' => $oppositeRole,
+                        'subject' => $subject,
+                        'availability_overlap' => $overlap
+                    ]);
                     return $potentialPartnerId;
                 }
 
@@ -148,13 +218,20 @@ class ChatService
 
         if (!$partnerGuestId) {
             Log::info('No valid partner found after search', [
-                'guest_id' => $guestId
+                'guest_id' => $guestId,
+                'role' => $role,
+                'subject' => $subject
             ]);
+
+            // Return appropriate message based on role
+            $message = $role === 'learner' 
+                ? 'No available tutor online for this subject. Please try again later.'
+                : 'No available learner online for this subject. Please try again later.';
 
             return [
                 'status' => 'waiting',
                 'available_users' => 0,
-                'message' => 'Waiting for another active user to start a chat...'
+                'message' => $message
             ];
         }
 
@@ -211,6 +288,7 @@ class ChatService
                 'chat_id' => $chat->chat_id,
                 'partner_id' => $chat->getPartnerId($guestId),
                 'status' => 'matched',
+                'started_at' => $chat->started_at->toISOString(),
                 'message' => 'You have been matched!'
             ];
 

@@ -14,6 +14,21 @@ class PresenceController extends Controller
 
     public function optIn(Request $request): JsonResponse
     {
+        $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+            'role' => 'required|in:tutor,learner',
+            'subject' => 'required|string|max:100',
+            'availability' => 'required|array|min:1',
+            'availability.*' => 'integer|min:0|max:23', // Hours 0-23
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()->toArray(),
+            ], 422);
+        }
+
         $sessionToken = $request->bearerToken();
         if (!$sessionToken) {
             return response()->json([
@@ -52,19 +67,35 @@ class PresenceController extends Controller
             ], 409);
         }
 
-        // Mark user as online and add to waiting pool
+        // Update guest with role, subject, and availability
+        $guest->update([
+            'role' => $request->input('role'),
+            'subject' => $request->input('subject'),
+            'availability' => $request->input('availability'),
+        ]);
+
+        // Mark user as online and add to waiting pool with matching criteria
         $this->presenceService->markUserOnline($guest->guest_id);
-        $this->presenceService->addToWaitingPool($guest->guest_id);
+        $this->presenceService->addToWaitingPool(
+            $guest->guest_id,
+            $request->input('role'),
+            $request->input('subject'),
+            $request->input('availability')
+        );
 
         // Update guest status to waiting
         app(\App\Repositories\GuestRepository::class)->updateStatus($guest->guest_id, 'waiting');
+
+        // Count waiting users with same criteria
+        $oppositeRole = $request->input('role') === 'tutor' ? 'learner' : 'tutor';
+        $waitingCount = $this->presenceService->countWaitingUsers($oppositeRole, $request->input('subject'));
 
         return response()->json([
             'success' => true,
             'message' => 'Opted in for matching',
             'data' => [
                 'guest_id' => $guest->guest_id,
-                'waiting_users' => $this->presenceService->countWaitingUsers(),
+                'waiting_users' => $waitingCount,
             ],
         ]);
     }

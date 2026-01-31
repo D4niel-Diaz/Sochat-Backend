@@ -22,11 +22,15 @@ class Guest extends Model
         'session_token',
         'ip_address',
         'status',
+        'role',
+        'subject',
+        'availability',
         'expires_at',
     ];
 
     protected $casts = [
         'expires_at' => 'datetime',
+        'availability' => 'array',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];

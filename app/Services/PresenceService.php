@@ -39,16 +39,28 @@ class PresenceService
             ->exists();
     }
 
-    public function addToWaitingPool(string $guestId): void
+    public function addToWaitingPool(string $guestId, ?string $role = null, ?string $subject = null, ?array $availability = null): void
     {
+        $data = [
+            'last_seen_at' => now(),
+            'is_online' => true,
+            'is_waiting' => true,
+            'expires_at' => now()->addSeconds(self::TTL_SECONDS),
+        ];
+
+        if ($role !== null) {
+            $data['role'] = $role;
+        }
+        if ($subject !== null) {
+            $data['subject'] = $subject;
+        }
+        if ($availability !== null) {
+            $data['availability'] = json_encode($availability);
+        }
+
         DB::table('presence')->updateOrInsert(
             ['guest_id' => $guestId],
-            [
-                'last_seen_at' => now(),
-                'is_online' => true,
-                'is_waiting' => true,
-                'expires_at' => now()->addSeconds(self::TTL_SECONDS),
-            ]
+            $data
         );
     }
 
@@ -69,23 +81,38 @@ class PresenceService
             ->exists();
     }
 
-    public function getWaitingUsers(): array
+    public function getWaitingUsers(?string $role = null, ?string $subject = null): array
     {
-        return DB::table('presence')
+        $query = DB::table('presence')
             ->where('is_waiting', true)
             ->where('is_online', true)
-            ->where('expires_at', '>', now())
-            ->pluck('guest_id')
-            ->toArray();
+            ->where('expires_at', '>', now());
+
+        if ($role !== null) {
+            $query->where('role', $role);
+        }
+        if ($subject !== null) {
+            $query->where('subject', $subject);
+        }
+
+        return $query->pluck('guest_id')->toArray();
     }
 
-    public function countWaitingUsers(): int
+    public function countWaitingUsers(?string $role = null, ?string $subject = null): int
     {
-        return DB::table('presence')
+        $query = DB::table('presence')
             ->where('is_waiting', true)
             ->where('is_online', true)
-            ->where('expires_at', '>', now())
-            ->count();
+            ->where('expires_at', '>', now());
+
+        if ($role !== null) {
+            $query->where('role', $role);
+        }
+        if ($subject !== null) {
+            $query->where('subject', $subject);
+        }
+
+        return $query->count();
     }
 
     public function getOnlineUsers(): array

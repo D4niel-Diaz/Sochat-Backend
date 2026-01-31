@@ -11,6 +11,35 @@ use Illuminate\Support\Facades\Route;
 
 Route::get('/health', [HealthController::class, 'check']);
 
+// Debug endpoint (remove in production)
+Route::get('/debug/presence', function () {
+    $presence = \Illuminate\Support\Facades\DB::table('presence')
+        ->where('expires_at', '>', now())
+        ->get()
+        ->map(function($p) {
+            return [
+                'guest_id' => $p->guest_id,
+                'role' => $p->role,
+                'subject' => $p->subject,
+                'availability' => $p->availability ? json_decode($p->availability, true) : null,
+                'is_online' => $p->is_online,
+                'is_waiting' => $p->is_waiting,
+                'expires_at' => $p->expires_at,
+                'last_seen_at' => $p->last_seen_at,
+            ];
+        });
+    
+    return response()->json([
+        'success' => true,
+        'data' => [
+            'total' => $presence->count(),
+            'online' => $presence->where('is_online', true)->count(),
+            'waiting' => $presence->where('is_waiting', true)->count(),
+            'presence' => $presence->values(),
+        ],
+    ]);
+});
+
 Route::prefix('v1')->group(function () {
     Route::post('/admin/login', [AuthController::class, 'adminLogin']);
 
