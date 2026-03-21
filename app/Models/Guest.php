@@ -14,8 +14,8 @@ class Guest extends Model
 
     protected $primaryKey = 'guest_id';
 
-    protected $keyType = 'string';
-    public $incrementing = false;
+    protected $keyType    = 'string';
+    public    $incrementing = false;
 
     protected $fillable = [
         'guest_id',
@@ -29,26 +29,40 @@ class Guest extends Model
     ];
 
     protected $casts = [
-        'expires_at' => 'datetime',
+        'expires_at'   => 'datetime',
         'availability' => 'array',
-        'created_at' => 'datetime',
-        'updated_at' => 'datetime',
+        'created_at'   => 'datetime',
+        'updated_at'   => 'datetime',
     ];
 
-    protected static function boot()
+    /**
+     * Transient (not persisted). The unhashed raw token is set here so that
+     * GuestController::create() can return it to the caller exactly once.
+     * The DB column stores only the SHA-256 hash.
+     */
+    public ?string $rawToken = null;
+
+    protected static function boot(): void
     {
         parent::boot();
 
-        static::creating(function ($model) {
+        static::creating(function (self $model) {
             if (empty($model->guest_id)) {
                 $model->guest_id = (string) Str::uuid();
             }
+
             if (empty($model->session_token)) {
-                // Use cryptographically secure random bytes for session token
-                $model->session_token = bin2hex(random_bytes(32));
+                // SECURITY: Generate 256-bit raw token and store only its SHA-256 hash.
+                // The raw token is exposed to the caller ONCE via the `rawToken` transient
+                // property and never stored in the DB — prevents session hijack via DB dump.
+                $rawToken           = bin2hex(random_bytes(32));
+                $model->rawToken    = $rawToken;           // transient, returned to caller
+                $model->session_token = hash('sha256', $rawToken); // stored in DB
             }
         });
     }
+
+    // ── Relationships ──────────────────────────────────────────────────────
 
     public function chatsAsGuest1()
     {
@@ -75,6 +89,8 @@ class Guest extends Model
         return $this->hasMany(Report::class, 'reported_guest_id');
     }
 
+    // ── Scopes ─────────────────────────────────────────────────────────────
+
     public function scopeActive($query)
     {
         return $query->where('status', 'active')->where('expires_at', '>', now());
@@ -95,6 +111,8 @@ class Guest extends Model
         return $query->where('status', 'idle')->where('expires_at', '>', now());
     }
 
+    // ── Helpers ─────────────────────────────────────────────────────────────
+
     public function isBanned(): bool
     {
         return $this->status === 'banned';
@@ -102,6 +120,8 @@ class Guest extends Model
 
     public function isActive(): bool
     {
-        return $this->status === 'active' && $this->expires_at && $this->expires_at->isFuture();
+        return $this->status === 'active'
+            && $this->expires_at
+            && $this->expires_at->isFuture();
     }
 }

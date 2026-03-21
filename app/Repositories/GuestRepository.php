@@ -11,14 +11,21 @@ class GuestRepository
     {
         return Guest::create([
             'ip_address' => $ipAddress,
-            'status' => 'waiting',
+            'status'     => 'idle',
             'expires_at' => now()->addHours($ttlHours),
         ]);
     }
 
-    public function findBySessionToken(string $token): ?Guest
+    /**
+     * Look up a guest by the raw bearer token.
+     *
+     * SECURITY FIX: Incoming tokens are raw (hex). The DB stores the SHA-256 hash.
+     * We hash the incoming token before querying so plaintext is never compared or
+     * stored — preventing session leakage via DB dump or query log.
+     */
+    public function findBySessionToken(string $rawToken): ?Guest
     {
-        return Guest::where('session_token', $token)->first();
+        return Guest::where('session_token', hash('sha256', $rawToken))->first();
     }
 
     public function findByGuestId(string $guestId): ?Guest
@@ -71,12 +78,15 @@ class GuestRepository
 
     public function banGuest(string $guestId): bool
     {
-        return Guest::where('guest_id', $guestId)->update(['status' => 'banned', 'updated_at' => now()]) > 0;
+        return Guest::where('guest_id', $guestId)
+            ->update(['status' => 'banned', 'updated_at' => now()]) > 0;
     }
 
     public function unbanGuest(string $guestId): bool
     {
-        return Guest::where('guest_id', $guestId)->where('status', 'banned')->update(['status' => 'idle', 'updated_at' => now()]) > 0;
+        return Guest::where('guest_id', $guestId)
+            ->where('status', 'banned')
+            ->update(['status' => 'idle', 'updated_at' => now()]) > 0;
     }
 
     public function deleteExpired(): int

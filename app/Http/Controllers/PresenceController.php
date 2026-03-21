@@ -2,79 +2,83 @@
 
 namespace App\Http\Controllers;
 
+use App\Repositories\ChatRepository;
+use App\Repositories\GuestRepository;
 use App\Services\PresenceService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
 
 class PresenceController extends Controller
 {
     public function __construct(
-        private PresenceService $presenceService
+        private PresenceService  $presenceService,
+        private GuestRepository  $guestRepository,
+        private ChatRepository   $chatRepository,
     ) {}
+
+    /**
+     * Shared helper — reads the authenticated guest from the request attributes
+     * set by the auth.guest middleware. Falls back to a DB lookup only if the
+     * attribute is missing (shouldn't happen in normal flow).
+     *
+     * FIX: Removes the redundant DB round-trip that existed in every method body
+     * (manual BearerToken + findBySessionToken calls). The middleware already did
+     * this once — no reason to do it 5 more times.
+     */
+    private function getGuest(Request $request)
+    {
+        return $request->attributes->get('guest')
+            ?? $this->guestRepository->findBySessionToken($request->bearerToken() ?? '');
+    }
 
     public function optIn(Request $request): JsonResponse
     {
-        $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-            'role' => 'required|in:tutor,learner',
-            'subject' => 'required|string|max:100',
-            'availability' => 'required|array|min:1',
-            'availability.*' => 'integer|min:0|max:23', // Hours 0-23
+        $validator = Validator::make($request->all(), [
+            'role'           => 'required|in:tutor,learner',
+            'subject'        => 'required|string|max:100',
+            'availability'   => 'required|array|min:1',
+            'availability.*' => 'integer|min:0|max:23',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validation failed',
-                'errors' => $validator->errors()->toArray(),
+                'errors'  => $validator->errors()->toArray(),
             ], 422);
         }
 
-        $sessionToken = $request->bearerToken();
-        if (!$sessionToken) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Session token required',
-            ], 401);
-        }
-
-        $guest = app(\App\Repositories\GuestRepository::class)->findBySessionToken($sessionToken);
+        $guest = $this->getGuest($request);
         if (!$guest) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Invalid session',
-            ], 401);
+            return response()->json(['success' => false, 'message' => 'Invalid session'], 401);
         }
 
         if ($guest->isBanned()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Guest is banned',
-            ], 403);
+            return response()->json(['success' => false, 'message' => 'Guest is banned'], 403);
         }
 
-        // CRITICAL: Check if user already has an active chat
-        $chatRepository = app(\App\Repositories\ChatRepository::class);
-        $existingChat = $chatRepository->findActiveByGuestId($guest->guest_id);
+        // Check if user already has an active chat
+        $existingChat = $this->chatRepository->findActiveByGuestId($guest->guest_id);
         if ($existingChat) {
             return response()->json([
                 'success' => false,
                 'message' => 'You are already in an active chat',
-                'data' => [
-                    'chat_id' => $existingChat->chat_id,
+                'data'    => [
+                    'chat_id'    => $existingChat->chat_id,
                     'partner_id' => $existingChat->getPartnerId($guest->guest_id),
-                    'status' => 'already_matched',
+                    'status'     => 'already_matched',
                 ],
             ], 409);
         }
 
-        // Update guest with role, subject, and availability
+        // Persist matching criteria on the guest record
         $guest->update([
-            'role' => $request->input('role'),
-            'subject' => $request->input('subject'),
+            'role'         => $request->input('role'),
+            'subject'      => $request->input('subject'),
             'availability' => $request->input('availability'),
         ]);
 
-        // Mark user as online and add to waiting pool with matching criteria
         $this->presenceService->markUserOnline($guest->guest_id);
         $this->presenceService->addToWaitingPool(
             $guest->guest_id,
@@ -82,19 +86,16 @@ class PresenceController extends Controller
             $request->input('subject'),
             $request->input('availability')
         );
+        $this->guestRepository->updateStatus($guest->guest_id, 'waiting');
 
-        // Update guest status to waiting
-        app(\App\Repositories\GuestRepository::class)->updateStatus($guest->guest_id, 'waiting');
-
-        // Count waiting users with same criteria
         $oppositeRole = $request->input('role') === 'tutor' ? 'learner' : 'tutor';
         $waitingCount = $this->presenceService->countWaitingUsers($oppositeRole, $request->input('subject'));
 
         return response()->json([
             'success' => true,
             'message' => 'Opted in for matching',
-            'data' => [
-                'guest_id' => $guest->guest_id,
+            'data'    => [
+                'guest_id'      => $guest->guest_id,
                 'waiting_users' => $waitingCount,
             ],
         ]);
@@ -102,131 +103,68 @@ class PresenceController extends Controller
 
     public function optOut(Request $request): JsonResponse
     {
-        $sessionToken = $request->bearerToken();
-        if (!$sessionToken) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Session token required',
-            ], 401);
-        }
-
-        $guest = app(\App\Repositories\GuestRepository::class)->findBySessionToken($sessionToken);
+        $guest = $this->getGuest($request);
         if (!$guest) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Invalid session',
-            ], 401);
+            return response()->json(['success' => false, 'message' => 'Invalid session'], 401);
         }
 
-        // Remove from waiting pool but keep online
         $this->presenceService->removeFromWaitingPool($guest->guest_id);
+        $this->guestRepository->updateStatus($guest->guest_id, 'idle');
 
-        // Update guest status to idle
-        app(\App\Repositories\GuestRepository::class)->updateStatus($guest->guest_id, 'idle');
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Opted out from matching',
-        ]);
+        return response()->json(['success' => true, 'message' => 'Opted out from matching']);
     }
 
     public function heartbeat(Request $request): JsonResponse
     {
-        $sessionToken = $request->bearerToken();
-        if (!$sessionToken) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Session token required',
-            ], 401);
-        }
-
-        $guest = app(\App\Repositories\GuestRepository::class)->findBySessionToken($sessionToken);
+        $guest = $this->getGuest($request);
         if (!$guest) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Invalid session',
-            ], 401);
+            return response()->json(['success' => false, 'message' => 'Invalid session'], 401);
         }
 
-        // CRITICAL: Check if user has an active chat and refresh chat timestamp
-        $chatRepository = app(\App\Repositories\ChatRepository::class);
-        $activeChat = $chatRepository->findActiveByGuestId($guest->guest_id);
-        if ($activeChat) {
-            // Update the chat's last activity timestamp (add a column for this if needed)
-            // For now, we'll just refresh presence
-        }
-
-        // Refresh presence TTL
         $this->presenceService->refreshPresence($guest->guest_id);
+
+        $activeChat = $this->chatRepository->findActiveByGuestId($guest->guest_id);
 
         return response()->json([
             'success' => true,
             'message' => 'Heartbeat received',
-            'data' => [
+            'data'    => [
                 'has_active_chat' => $activeChat !== null,
-                'chat_id' => $activeChat?->chat_id,
+                'chat_id'         => $activeChat?->chat_id,
             ],
         ]);
     }
 
     public function disconnect(Request $request): JsonResponse
     {
-        $sessionToken = $request->bearerToken();
-        if (!$sessionToken) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Session token required',
-            ], 401);
-        }
-
-        $guest = app(\App\Repositories\GuestRepository::class)->findBySessionToken($sessionToken);
+        $guest = $this->getGuest($request);
         if (!$guest) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Invalid session',
-            ], 401);
+            return response()->json(['success' => false, 'message' => 'Invalid session'], 401);
         }
 
-        // Mark user as offline and remove from waiting pool
         $this->presenceService->markUserOffline($guest->guest_id);
+        $this->guestRepository->updateStatus($guest->guest_id, 'idle');
 
-        // Update guest status to idle
-        app(\App\Repositories\GuestRepository::class)->updateStatus($guest->guest_id, 'idle');
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Disconnected',
-        ]);
+        return response()->json(['success' => true, 'message' => 'Disconnected']);
     }
 
     public function status(Request $request): JsonResponse
     {
-        $sessionToken = $request->bearerToken();
-        if (!$sessionToken) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Session token required',
-            ], 401);
-        }
-
-        $guest = app(\App\Repositories\GuestRepository::class)->findBySessionToken($sessionToken);
+        $guest = $this->getGuest($request);
         if (!$guest) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Invalid session',
-            ], 401);
+            return response()->json(['success' => false, 'message' => 'Invalid session'], 401);
         }
 
-        $isOnline = $this->presenceService->isUserOnline($guest->guest_id);
+        $isOnline  = $this->presenceService->isUserOnline($guest->guest_id);
         $isWaiting = $this->presenceService->isInWaitingPool($guest->guest_id);
 
         return response()->json([
             'success' => true,
-            'data' => [
-                'guest_id' => $guest->guest_id,
-                'is_online' => $isOnline,
-                'is_waiting' => $isWaiting,
-                'online_users' => $this->presenceService->countOnlineUsers(),
+            'data'    => [
+                'guest_id'      => $guest->guest_id,
+                'is_online'     => $isOnline,
+                'is_waiting'    => $isWaiting,
+                'online_users'  => $this->presenceService->countOnlineUsers(),
                 'waiting_users' => $this->presenceService->countWaitingUsers(),
             ],
         ]);

@@ -7,12 +7,25 @@ use Illuminate\Database\Eloquent\Collection;
 
 class ChatRepository
 {
+    /**
+     * Create a new chat between two guests.
+     *
+     * FIX: IDs are sorted alphabetically (min, max) in application code before
+     * writing to the DB. This removes the dependency on the MySQL
+     * `normalize_chat_pair` trigger that was swapping IDs silently after INSERT,
+     * which caused `Chat::getPartnerId()` to return the wrong user.
+     * The trigger has been dropped via the accompanying migration.
+     */
     public function create(string $guestId1, string $guestId2): Chat
     {
+        // Guarantee deterministic column assignment — alphabetically lower UUID is always id_1
+        $id1 = min($guestId1, $guestId2);
+        $id2 = max($guestId1, $guestId2);
+
         return Chat::create([
-            'guest_id_1' => $guestId1,
-            'guest_id_2' => $guestId2,
-            'status' => 'active',
+            'guest_id_1' => $id1,
+            'guest_id_2' => $id2,
+            'status'     => 'active',
         ]);
     }
 
@@ -26,7 +39,7 @@ class ChatRepository
         return Chat::active()
             ->where(function ($query) use ($guestId) {
                 $query->where('guest_id_1', $guestId)
-                    ->orWhere('guest_id_2', $guestId);
+                      ->orWhere('guest_id_2', $guestId);
             })
             ->first();
     }

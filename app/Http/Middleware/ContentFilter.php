@@ -7,6 +7,18 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Config;
 use Symfony\Component\HttpFoundation\Response;
 
+/**
+ * Pre-filters message content BEFORE it reaches the controller.
+ *
+ * FIX — Consolidated responsibility:
+ * - ContentFilter middleware: handles ONLY banned-word substitution (mutates `content`)
+ * - MessageService:           handles sanitization (strip_tags) + flagging personal info
+ *
+ * Previously, ContentFilter ALSO blocked messages with personal info (returned 400),
+ * while MessageService only flagged the same content. These two conflicting behaviours
+ * (block vs. flag) are now resolved: blocking is removed from middleware; MessageService
+ * is the single source of truth for flagging.
+ */
 class ContentFilter
 {
     public function handle(Request $request, Closure $next): Response
@@ -14,22 +26,14 @@ class ContentFilter
         if ($request->has('content') || $request->has('message')) {
             $content = $request->input('content') ?? $request->input('message');
 
-            // Only filter if content is not null
             if ($content !== null && $content !== '') {
-                $filteredContent = $this->filterContent($content);
+                $filtered = $this->filterBannedWords($content);
 
-                if ($filteredContent !== $content) {
+                if ($filtered !== $content) {
                     $request->merge([
-                        'content' => $filteredContent,
-                        'message' => $filteredContent,
+                        'content' => $filtered,
+                        'message' => $filtered,
                     ]);
-                }
-
-                if ($this->detectPersonalInfo($filteredContent)) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Message contains personal information and cannot be sent',
-                    ], 400);
                 }
             }
         }
@@ -37,31 +41,19 @@ class ContentFilter
         return $next($request);
     }
 
-    protected function filterContent(string $content): string
+    /**
+     * Replaces banned words with asterisks.
+     * PersonalInfo detection (flagging) is handled by MessageService, not here.
+     */
+    protected function filterBannedWords(string $content): string
     {
         $bannedWords = Config::get('moderation.banned_words', []);
-        $filtered = $content;
+        $filtered    = $content;
 
         foreach ($bannedWords as $word) {
-            $filtered = str_ireplace($word, str_repeat('*', strlen($word)), $filtered);
+            $filtered = str_ireplace($word, str_repeat('*', mb_strlen($word)), $filtered);
         }
 
         return $filtered;
-    }
-
-    protected function detectPersonalInfo(string $content): bool
-    {
-        $patterns = Config::get('moderation.personal_info_patterns', [
-            '/\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/', 
-            '/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/',
-        ]);
-
-        foreach ($patterns as $pattern) {
-            if (preg_match($pattern, $content)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 }

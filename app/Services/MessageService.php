@@ -15,7 +15,7 @@ class MessageService
     public function __construct(MessageRepository $messageRepository, ChatRepository $chatRepository)
     {
         $this->messageRepository = $messageRepository;
-        $this->chatRepository = $chatRepository;
+        $this->chatRepository    = $chatRepository;
     }
 
     public function sendMessage(int $chatId, string $senderGuestId, string $content): ?array
@@ -26,10 +26,15 @@ class MessageService
             return null;
         }
 
+        // FIX: Apply full content pipeline in correct order:
+        // 1. Strip all HTML (XSS prevention)
+        // 2. Apply banned-word filter (was previously never called — bug fixed)
+        // 3. Detect personal info (for flagging)
         $sanitizedContent = $this->sanitizeContent($content);
-        $isFlagged = $this->detectPersonalInfo($sanitizedContent);
+        $filteredContent  = $this->filterContent($sanitizedContent);
+        $isFlagged        = $this->detectPersonalInfo($filteredContent);
 
-        $message = $this->messageRepository->create($chatId, $senderGuestId, $sanitizedContent);
+        $message = $this->messageRepository->create($chatId, $senderGuestId, $filteredContent);
 
         if ($isFlagged) {
             $this->messageRepository->flagMessage($message->message_id);
@@ -39,7 +44,7 @@ class MessageService
 
         return [
             'message_id' => $message->message_id,
-            'content' => $sanitizedContent,
+            'content'    => $filteredContent,
             'created_at' => $message->created_at->toIso8601String(),
             'is_flagged' => $isFlagged,
         ];
@@ -55,15 +60,13 @@ class MessageService
         $messages = $this->messageRepository->getMessagesByChatId($chatId, $limit);
 
         return [
-            'messages' => $messages->map(function ($msg) use ($guestId) {
-                return [
-                    'message_id' => $msg->message_id,
-                    'sender' => $msg->sender_guest_id === $guestId ? 'you' : 'partner',
-                    'content' => $msg->content,
-                    'created_at' => $msg->created_at->toIso8601String(),
-                    'is_flagged' => $msg->is_flagged,
-                ];
-            })->toArray(),
+            'messages' => $messages->map(fn($msg) => [
+                'message_id' => $msg->message_id,
+                'sender'     => $msg->sender_guest_id === $guestId ? 'you' : 'partner',
+                'content'    => $msg->content,
+                'created_at' => $msg->created_at->toIso8601String(),
+                'is_flagged' => $msg->is_flagged,
+            ])->toArray(),
         ];
     }
 
@@ -84,32 +87,37 @@ class MessageService
         $nextCursor = $hasMore ? $messages->last()->created_at->toIso8601String() : null;
 
         return [
-            'messages' => $messages->reverse()->map(function ($msg) use ($guestId) {
-                return [
-                    'message_id' => $msg->message_id,
-                    'sender' => $msg->sender_guest_id === $guestId ? 'you' : 'partner',
-                    'content' => $msg->content,
-                    'created_at' => $msg->created_at->toIso8601String(),
-                    'is_flagged' => $msg->is_flagged,
-                ];
-            })->toArray(),
+            'messages'    => $messages->reverse()->map(fn($msg) => [
+                'message_id' => $msg->message_id,
+                'sender'     => $msg->sender_guest_id === $guestId ? 'you' : 'partner',
+                'content'    => $msg->content,
+                'created_at' => $msg->created_at->toIso8601String(),
+                'is_flagged' => $msg->is_flagged,
+            ])->toArray(),
             'next_cursor' => $nextCursor,
-            'has_more' => $hasMore,
+            'has_more'    => $hasMore,
         ];
     }
 
+    /**
+     * Apply banned-word filter (censors matched words with asterisks).
+     * FIX: This method was defined but never called in sendMessage — now wired in.
+     */
     protected function filterContent(string $content): string
     {
         $bannedWords = Config::get('moderation.banned_words', []);
-        $filtered = $content;
+        $filtered    = $content;
 
         foreach ($bannedWords as $word) {
-            $filtered = str_ireplace($word, str_repeat('*', strlen($word)), $filtered);
+            $filtered = str_ireplace($word, str_repeat('*', mb_strlen($word)), $filtered);
         }
 
         return $filtered;
     }
 
+    /**
+     * Detect personal information patterns (phones, emails, etc.) for flagging.
+     */
     protected function detectPersonalInfo(string $content): bool
     {
         $patterns = Config::get('moderation.personal_info_patterns', []);
@@ -123,19 +131,22 @@ class MessageService
         return false;
     }
 
+    /**
+     * Strip HTML and encode for safe storage.
+     *
+     * FIX: Removed redundant regex patterns — strip_tags() already removes
+     * <script>, <iframe>, <object>, <embed> etc. The follow-up regexes
+     * on an already-stripped string were wasted cycles.
+     */
     protected function sanitizeContent(string $content): string
     {
+        // Remove all HTML tags (prevents XSS at input level)
         $sanitized = strip_tags($content);
-        
-        $sanitized = preg_replace('/<script\b[^>]*>(.*?)<\/script>/is', '', $sanitized);
-        $sanitized = preg_replace('/<iframe\b[^>]*>(.*?)<\/iframe>/is', '', $sanitized);
-        $sanitized = preg_replace('/<object\b[^>]*>(.*?)<\/object>/is', '', $sanitized);
-        $sanitized = preg_replace('/<embed\b[^>]*>/i', '', $sanitized);
-        $sanitized = preg_replace('/javascript:/i', '', $sanitized);
-        $sanitized = preg_replace('/on\w+\s*=/i', '', $sanitized);
-        
-        $sanitized = htmlspecialchars($sanitized, ENT_QUOTES | ENT_HTML5, 'UTF-8', false);
-        
+
+        // Encode special characters for safe HTML output / storage
+        // ENT_QUOTES covers both single and double quotes
+        $sanitized = htmlspecialchars($sanitized, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
         return trim($sanitized);
     }
 }
