@@ -15,15 +15,49 @@ test('can start a chat', function () {
     $guest1 = $guestRepository->create('127.0.0.1');
     $guest2 = $guestRepository->create('127.0.0.2');
 
+    foreach ([$guest1, $guest2] as $guest) {
+        $this->withToken($guest->session_token)->postJson('/api/v1/presence/opt-in', [
+            'role' => 'learner',
+            'subject' => 'General',
+            'availability' => [9, 10],
+        ])->assertOk();
+    }
+
     $response = $this->withToken($guest1->session_token)
         ->postJson('/api/v1/chat/start');
 
     $response->assertStatus(200)
-        ->assertJsonStructure([
-            'success',
-            'data',
-            'message',
-        ]);
+        ->assertJsonPath('data.status', 'matched')
+        ->assertJsonPath('data.partner_id', $guest2->guest_id);
+});
+
+test('the matched partner polling /chat/start gets the same chat', function () {
+    /** @var Tests\TestCase $this */
+    $guestRepository = app(GuestRepository::class);
+
+    $guest1 = $guestRepository->create('127.0.0.1');
+    $guest2 = $guestRepository->create('127.0.0.2');
+
+    foreach ([$guest1, $guest2] as $guest) {
+        $this->withToken($guest->session_token)->postJson('/api/v1/presence/opt-in', [
+            'role' => 'learner',
+            'subject' => 'General',
+            'availability' => [9, 10],
+        ])->assertOk();
+    }
+
+    $chatId = $this->withToken($guest1->session_token)
+        ->postJson('/api/v1/chat/start')
+        ->assertJsonPath('data.status', 'matched')
+        ->json('data.chat_id');
+
+    // REST-fallback partner: matching removed them from the waiting pool
+    $this->withToken($guest2->session_token)
+        ->postJson('/api/v1/chat/start')
+        ->assertOk()
+        ->assertJsonPath('data.status', 'already_matched')
+        ->assertJsonPath('data.chat_id', $chatId)
+        ->assertJsonPath('data.partner_id', $guest1->guest_id);
 });
 
 test('cannot start chat with invalid session token', function () {

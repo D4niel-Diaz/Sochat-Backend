@@ -53,8 +53,8 @@ class ChatServiceTest extends TestCase
 
         $this->presenceService->markUserOnline($guest1->guest_id);
         $this->presenceService->markUserOnline($guest2->guest_id);
-        $this->presenceService->addToWaitingPool($guest1->guest_id);
-        $this->presenceService->addToWaitingPool($guest2->guest_id);
+        $this->presenceService->addToWaitingPool($guest1->guest_id, 'learner', 'General', [9, 10]);
+        $this->presenceService->addToWaitingPool($guest2->guest_id, 'learner', 'General', [10, 11]);
 
         $result = $this->chatService->findMatch($guest1->guest_id);
 
@@ -95,7 +95,7 @@ class ChatServiceTest extends TestCase
 
         $this->assertNotNull($result);
         $this->assertEquals('not_opted_in', $result['status']);
-        $this->assertEquals('You must click "Start Chat" to begin matching', $result['message']);
+        $this->assertEquals('You must click "Find Match" to begin matching', $result['message']);
     }
 
     public function test_find_match_fails_for_guest_not_in_waiting_pool(): void
@@ -108,10 +108,10 @@ class ChatServiceTest extends TestCase
 
         $this->assertNotNull($result);
         $this->assertEquals('not_opted_in', $result['status']);
-        $this->assertEquals('You must click "Start Chat" to begin matching', $result['message']);
+        $this->assertEquals('You must click "Find Match" to begin matching', $result['message']);
     }
 
-    public function test_find_match_fails_for_guest_with_active_chat(): void
+    public function test_find_match_returns_existing_chat_for_guest_with_active_chat(): void
     {
         $guest1 = Guest::factory()->create(['status' => 'active', 'expires_at' => now()->addHours(24)]);
         $guest2 = Guest::factory()->create(['status' => 'active', 'expires_at' => now()->addHours(24)]);
@@ -124,9 +124,12 @@ class ChatServiceTest extends TestCase
 
         $result = $this->chatService->findMatch($guest1->guest_id);
 
+        // Matching removes both guests from the waiting pool, so an already-matched
+        // guest must get their chat back instead of "not_opted_in".
         $this->assertNotNull($result);
-        $this->assertEquals('not_opted_in', $result['status']);
-        $this->assertEquals('You must click "Start Chat" to begin matching', $result['message']);
+        $this->assertEquals('already_matched', $result['status']);
+        $this->assertEquals($chat->chat_id, $result['chat_id']);
+        $this->assertEquals($guest2->guest_id, $result['partner_id']);
     }
 
     public function test_end_chat_success(): void

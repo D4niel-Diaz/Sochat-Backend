@@ -46,7 +46,11 @@ class MessageServiceTest extends TestCase
         $this->assertArrayHasKey('is_flagged', $result);
     }
 
-    public function test_send_message_sanitizes_xss(): void
+    /**
+     * Content is stored as typed; the frontend renders it as text (React escapes),
+     * so markup can't execute. Stripping tags server-side deleted real text.
+     */
+    public function test_send_message_stores_markup_as_plain_text(): void
     {
         $guest1 = Guest::factory()->create(['status' => 'active']);
         $guest2 = Guest::factory()->create(['status' => 'active']);
@@ -60,8 +64,8 @@ class MessageServiceTest extends TestCase
         $result = $this->messageService->sendMessage($chat->chat_id, $guest1->guest_id, $maliciousContent);
 
         $this->assertNotNull($result);
-        $this->assertStringNotContainsString('<script>', $result['content']);
-        $this->assertStringContainsString('Hello', $result['content']);
+        $this->assertSame($maliciousContent, $result['content']);
+        $this->assertStringNotContainsString('&lt;', $result['content']);
     }
 
     public function test_send_message_detects_personal_info(): void

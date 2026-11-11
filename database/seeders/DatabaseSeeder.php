@@ -11,17 +11,24 @@ class DatabaseSeeder extends Seeder
     use WithoutModelEvents;
 
     /**
-     * Seed the application's database.
+     * Create the first admin from ADMIN_EMAIL / ADMIN_PASSWORD.
+     * There is deliberately no default password.
      */
     public function run(): void
     {
-        // Create default admin user if none exists
+        $email = env('ADMIN_EMAIL');
+        $password = env('ADMIN_PASSWORD');
+
+        if (!$email || !$password || strlen($password) < 12) {
+            $this->command?->warn('Skipping admin seed: set ADMIN_EMAIL and ADMIN_PASSWORD (12+ characters).');
+            return;
+        }
+
         Admin::firstOrCreate(
-            ['email' => 'admin@sorsutalk.local'],
+            ['email' => $email],
             [
-                'name' => 'System Administrator',
-                'email' => 'admin@sorsutalk.local',
-                'password' => 'admin123',
+                'name' => env('ADMIN_NAME', 'System Administrator'),
+                'password' => $password, // hashed by the model cast
                 'role' => 'super_admin',
             ]
         );

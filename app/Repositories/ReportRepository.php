@@ -7,6 +7,12 @@ use Illuminate\Database\Eloquent\Collection;
 
 class ReportRepository
 {
+    private const ADMIN_RELATIONS = [
+        'chat:chat_id,guest_id_1,guest_id_2',
+        'reporter:guest_id,ip_address',
+        'reported:guest_id,ip_address',
+    ];
+
     public function create(int $chatId, string $reporterGuestId, string $reportedGuestId, string $reason, ?string $ipAddress = null): Report
     {
         return Report::create([
@@ -27,14 +33,14 @@ class ReportRepository
     public function getPendingReports(): Collection
     {
         return Report::pending()
-            ->with(['chat:chat_id,guest_id_1,guest_id_2', 'reporter:guest_id,ip_address', 'reported:guest_id,ip_address'])
+            ->with(self::ADMIN_RELATIONS)
             ->orderBy('created_at', 'desc')
             ->get();
     }
 
     public function getAllReports(): Collection
     {
-        return Report::with(['chat:chat_id,guest_id_1,guest_id_2', 'reporter:guest_id,ip_address', 'reported:guest_id,ip_address'])
+        return Report::with(self::ADMIN_RELATIONS)
             ->orderBy('created_at', 'desc')
             ->get();
     }
@@ -44,13 +50,9 @@ class ReportRepository
         return Report::where('report_id', $reportId)->update(['status' => $status]) > 0;
     }
 
-    public function getReportsByGuestId(string $guestId): Collection
+    public function countAllReports(): int
     {
-        return Report::where('reporter_guest_id', $guestId)
-            ->orWhere('reported_guest_id', $guestId)
-            ->with(['chat'])
-            ->orderBy('created_at', 'desc')
-            ->get();
+        return Report::count();
     }
 
     public function countPendingReports(): int
@@ -58,15 +60,17 @@ class ReportRepository
         return Report::pending()->count();
     }
 
-    public function countReportsByGuestId(string $guestId): int
+    public function existsForChatAndReporter(int $chatId, string $reporterGuestId): bool
     {
-        return Report::where('reported_guest_id', $guestId)->count();
+        return Report::where('chat_id', $chatId)
+            ->where('reporter_guest_id', $reporterGuestId)
+            ->exists();
     }
 
-    public function countPendingReportsByGuestId(string $guestId): int
+    public function countDistinctReportersByGuestId(string $guestId): int
     {
         return Report::where('reported_guest_id', $guestId)
-            ->where('status', 'pending')
-            ->count();
+            ->distinct()
+            ->count('reporter_guest_id');
     }
 }

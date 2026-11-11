@@ -6,6 +6,18 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 
+/**
+ * @property string $guest_id
+ * @property string $session_token
+ * @property string|null $ip_address
+ * @property string $status idle|waiting|active|banned
+ * @property string|null $role tutor|learner
+ * @property string|null $subject
+ * @property array|null $availability
+ * @property \Illuminate\Support\Carbon|null $expires_at
+ * @property \Illuminate\Support\Carbon|null $created_at
+ * @property \Illuminate\Support\Carbon|null $updated_at
+ */
 class Guest extends Model
 {
     use HasFactory;
@@ -26,6 +38,10 @@ class Guest extends Model
         'subject',
         'availability',
         'expires_at',
+    ];
+
+    protected $hidden = [
+        'session_token',
     ];
 
     protected $casts = [

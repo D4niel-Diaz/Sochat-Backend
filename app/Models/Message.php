@@ -5,6 +5,15 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
+/**
+ * @property int $message_id
+ * @property int $chat_id
+ * @property string $sender_guest_id
+ * @property string $content
+ * @property bool $is_flagged
+ * @property \Illuminate\Support\Carbon|null $created_at
+ * @property \Illuminate\Support\Carbon|null $updated_at
+ */
 class Message extends Model
 {
     use HasFactory;
@@ -20,7 +29,7 @@ class Message extends Model
 
     public function chat()
     {
-        return $this->belongsTo(Chat::class);
+        return $this->belongsTo(Chat::class, 'chat_id', 'chat_id');
     }
 
     public function sender()

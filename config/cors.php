@@ -1,44 +1,30 @@
 <?php
 
+$isLocal = env('APP_ENV', 'production') === 'local';
+
 return [
 
     'paths' => [
         'api/*',
-        'sanctum/csrf-cookie',
     ],
 
-    'allowed_methods' => [
-        'GET',
-        'POST',
-        'PUT',
-        'PATCH',
-        'DELETE',
-        'OPTIONS',
-    ],
+    'allowed_methods' => ['GET', 'POST', 'OPTIONS'],
 
-    'allowed_origins' => [
+    // Exact origins. Extra ones can be added with FRONTEND_URL / FRONTEND_URL_PROD.
+    'allowed_origins' => array_values(array_filter([
         env('FRONTEND_URL'),
         env('FRONTEND_URL_PROD'),
-        'https://sochat-frontend-63y4.vercel.app',
-        'https://sochat-frontend.vercel.app',
         'https://sochat-livid.vercel.app',
-        'https://sochat-git-main-daniels-projects-8c2bbb7b.vercel.app',
-        'http://localhost:5173',
-        'http://127.0.0.1:5173',
-        'http://localhost:5174',
-        'http://127.0.0.1:5174',
-        'http://localhost:5177',
-        'http://127.0.0.1:5177',
-    ],
+        'https://sochat-frontend.vercel.app',
+        'https://sochat-frontend-63y4.vercel.app',
+    ])),
 
-    'allowed_origins_patterns' => [
-        'https://sochat-*.vercel.app',
-        'https://sochat-frontend-*.vercel.app',
-        'https://sochat-git-*.vercel.app',
-        'https://*.vercel.app',
-        'http://localhost:*',
-        'http://127.0.0.1:*',
-    ],
+    // Real regexes (fruitcake/php-cors passes these straight to preg_match).
+    'allowed_origins_patterns' => array_values(array_filter([
+        // This project's Vercel production and preview deployments only
+        '#^https://sochat(-[a-z0-9-]+)?\.vercel\.app$#',
+        $isLocal ? '#^http://(localhost|127\.0\.0\.1)(:\d+)?$#' : null,
+    ])),
 
     'allowed_headers' => [
         'Content-Type',
@@ -46,17 +32,16 @@ return [
         'X-Requested-With',
         'Accept',
         'Origin',
-        'Access-Control-Request-Method',
-        'Access-Control-Request-Headers',
     ],
 
     'exposed_headers' => [
         'X-RateLimit-Limit',
         'X-RateLimit-Remaining',
-        'X-RateLimit-Reset',
+        'Retry-After',
     ],
 
     'max_age' => 86400,
 
-    'supports_credentials' => true,
+    // Auth uses Authorization bearer tokens, not cookies
+    'supports_credentials' => false,
 ];

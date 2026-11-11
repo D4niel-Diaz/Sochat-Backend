@@ -4,8 +4,8 @@ namespace App\Services;
 
 use App\Repositories\ReportRepository;
 use App\Repositories\GuestRepository;
-use App\Events\UserReported;
-use App\Jobs\ProcessReport;
+use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Log;
 
 class ReportService
 {
@@ -18,44 +18,34 @@ class ReportService
         $this->guestRepository = $guestRepository;
     }
 
+    /**
+     * Returns null when this reporter has already reported this chat.
+     */
     public function createReport(int $chatId, string $reporterGuestId, string $reportedGuestId, string $reason, ?string $ipAddress = null): ?array
     {
+        if ($this->reportRepository->existsForChatAndReporter($chatId, $reporterGuestId)) {
+            return null;
+        }
+
         $report = $this->reportRepository->create($chatId, $reporterGuestId, $reportedGuestId, $reason, $ipAddress);
 
-        event(new UserReported($report));
+        // Count distinct reporters so one person can't ban someone by reporting repeatedly
+        $reporterCount = $this->reportRepository->countDistinctReportersByGuestId($reportedGuestId);
+        $threshold = (int) Config::get('moderation.report_threshold', 3);
+        $autoBanned = $reporterCount >= $threshold;
 
-        ProcessReport::dispatch($report->report_id);
-
-        $reportCount = $this->reportRepository->countReportsByGuestId($reportedGuestId);
-
-        if ($reportCount >= 3) {
+        if ($autoBanned) {
             $this->guestRepository->banGuest($reportedGuestId);
+            Log::info('Auto-banned guest after reports from distinct users', [
+                'guest_id' => $reportedGuestId,
+                'reporters' => $reporterCount,
+            ]);
         }
 
         return [
             'report_id' => $report->report_id,
             'status' => $report->status,
-            'auto_banned' => $reportCount >= 3,
+            'auto_banned' => $autoBanned,
         ];
-    }
-
-    public function getPendingReports(): array
-    {
-        return $this->reportRepository->getPendingReports()->toArray();
-    }
-
-    public function getAllReports(): array
-    {
-        return $this->reportRepository->getAllReports()->toArray();
-    }
-
-    public function updateReportStatus(int $reportId, string $status): bool
-    {
-        return $this->reportRepository->updateStatus($reportId, $status);
-    }
-
-    public function getReportCount(): int
-    {
-        return $this->reportRepository->countPendingReports();
     }
 }

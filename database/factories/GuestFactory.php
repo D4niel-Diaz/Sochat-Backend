@@ -13,10 +13,10 @@ class GuestFactory extends Factory
     public function definition(): array
     {
         return [
-            'guest_id' => Str::uuid(),
+            'guest_id' => (string) Str::uuid(),
             'session_token' => bin2hex(random_bytes(32)),
             'ip_address' => fake()->ipv4(),
-            'status' => fake()->randomElement(['idle', 'waiting', 'active', 'banned']),
+            'status' => 'waiting',
             'expires_at' => now()->addHours(24),
         ];
     }

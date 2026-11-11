@@ -4,8 +4,6 @@ namespace App\Services;
 
 use App\Repositories\GuestRepository;
 use App\Repositories\ChatRepository;
-use App\Events\UserMatched;
-use App\Events\ChatEnded;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -36,7 +34,19 @@ class ChatService
             return null;
         }
 
-        // STEP 2: CRITICAL - Verify user has opted in (mutual intent)
+        // STEP 2: Already matched? Matching removes both guests from the waiting
+        // pool, so this must come before the opt-in check or the partner who is
+        // polling /chat/start would be told "not_opted_in" forever.
+        $existingChat = $this->chatRepository->findActiveByGuestId($guestId);
+        if ($existingChat) {
+            return [
+                'chat_id' => $existingChat->chat_id,
+                'partner_id' => $existingChat->getPartnerId($guestId),
+                'status' => 'already_matched',
+            ];
+        }
+
+        // STEP 3: CRITICAL - Verify user has opted in (mutual intent)
         if (!$this->presenceService->isInWaitingPool($guestId)) {
             Log::warning('Match attempt failed: User has not opted in', ['guest_id' => $guestId]);
             return [
@@ -45,7 +55,7 @@ class ChatService
             ];
         }
 
-        // STEP 3: CRITICAL - Verify user is online (real-time presence)
+        // STEP 4: CRITICAL - Verify user is online (real-time presence)
         if (!$this->presenceService->isUserOnline($guestId)) {
             Log::warning('Match attempt failed: User not online', ['guest_id' => $guestId]);
             return [
@@ -54,7 +64,7 @@ class ChatService
             ];
         }
 
-        // STEP 4: Validate matching parameters (with defaults for simplified matching)
+        // STEP 5: Validate matching parameters (with defaults for simplified matching)
         // Role is optional now (simplified matching - any user can match with any user)
         if ($role && !in_array($role, ['tutor', 'learner'])) {
             $role = 'learner'; // Default to learner if invalid
@@ -69,20 +79,6 @@ class ChatService
 
         if (!$availability || !is_array($availability) || empty($availability)) {
             $availability = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18]; // Default availability
-        }
-
-        // STEP 5: Check for existing active chat BEFORE any state changes
-        $existingChat = $this->chatRepository->findActiveByGuestId($guestId);
-        if ($existingChat) {
-            Log::info('Guest already in active chat', [
-                'guest_id' => $guestId,
-                'chat_id' => $existingChat->chat_id
-            ]);
-            return [
-                'chat_id' => $existingChat->chat_id,
-                'partner_id' => $existingChat->getPartnerId($guestId),
-                'status' => 'already_matched',
-            ];
         }
 
         // STEP 6: Find and lock available match from presence waiting pool
@@ -113,37 +109,9 @@ class ChatService
                     ->lockForUpdate()
                     ->get();
 
-                Log::info('Match attempt initiated with lock', [
-                    'guest_id' => $guestId,
-                    'subject' => $subject,
-                    'waiting_users' => $waitingUsers->count(),
-                    'waiting_user_ids' => $waitingUsers->pluck('guest_id')->toArray()
-                ]);
-
+                // Called every couple of seconds per waiting user by the WebSocket
+                // server, so no per-attempt logging or extra debug queries here.
                 if ($waitingUsers->isEmpty()) {
-                    // Debug: Check what's actually in the presence table
-                    $allWaiting = DB::table('presence')
-                        ->where('is_waiting', true)
-                        ->where('expires_at', '>', now())
-                        ->get();
-                    
-                    Log::info('No match available - debugging', [
-                        'guest_id' => $guestId,
-                        'subject' => $subject,
-                        'availability' => $availability,
-                        'available_users' => 0,
-                        'all_waiting_count' => $allWaiting->count(),
-                        'all_waiting' => $allWaiting->map(function($p) {
-                            return [
-                                'guest_id' => $p->guest_id,
-                                'role' => $p->role,
-                                'subject' => $p->subject,
-                                'is_online' => $p->is_online,
-                                'is_waiting' => $p->is_waiting,
-                                'expires_at' => $p->expires_at,
-                            ];
-                        })->toArray()
-                    ]);
                     return null;
                 }
 
@@ -154,13 +122,7 @@ class ChatService
                     // CRITICAL: Check availability overlap
                     $overlap = array_intersect($availability, $candidateAvailability);
                     if (empty($overlap)) {
-                        Log::info('No availability overlap', [
-                            'guest_id' => $guestId,
-                            'candidate_id' => $candidate->guest_id,
-                            'requested' => $availability,
-                            'candidate' => $candidateAvailability
-                        ]);
-                        continue; // No availability overlap
+                        continue;
                     }
 
                     $potentialPartnerId = $candidate->guest_id;
@@ -196,7 +158,6 @@ class ChatService
                     Log::info('Valid partner found with matching criteria', [
                         'guest_id' => $guestId,
                         'partner_guest_id' => $potentialPartnerId,
-                        'role' => $oppositeRole,
                         'subject' => $subject,
                         'availability_overlap' => $overlap
                     ]);
@@ -205,7 +166,7 @@ class ChatService
 
                 return null;
             });
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Error during partner selection', [
                 'guest_id' => $guestId,
                 'error' => $e->getMessage()
@@ -217,12 +178,6 @@ class ChatService
         }
 
         if (!$partnerGuestId) {
-            Log::info('No valid partner found after search', [
-                'guest_id' => $guestId,
-                'role' => $role,
-                'subject' => $subject
-            ]);
-
             // Return appropriate message based on role
             $message = $role === 'learner' 
                 ? 'No available tutor online for this subject. Please try again later.'
@@ -281,9 +236,6 @@ class ChatService
                 return $chat;
             });
 
-            // STEP 7: Broadcast match event to both users
-            event(new UserMatched($chat));
-
             return [
                 'chat_id' => $chat->chat_id,
                 'partner_id' => $chat->getPartnerId($guestId),
@@ -292,7 +244,7 @@ class ChatService
                 'message' => 'You have been matched!'
             ];
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Failed to create chat', [
                 'guest_id' => $guestId,
                 'error' => $e->getMessage()
@@ -360,16 +312,6 @@ class ChatService
             return true;
         });
 
-        // Broadcast chat ended event to both participants
-        if ($result) {
-            event(new ChatEnded($chat, $guestId));
-        }
-
         return $result;
-    }
-
-    public function getOnlineCount(): int
-    {
-        return 0;
     }
 }
