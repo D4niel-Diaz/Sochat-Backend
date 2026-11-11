@@ -15,6 +15,9 @@ return [
 
     'name' => env('APP_NAME', 'Laravel'),
 
+    // New guest sessions allowed per client IP per minute (campus users share IPs)
+    'guest_create_per_minute' => (int) env('GUEST_CREATE_PER_MINUTE', 60),
+
     /*
     |--------------------------------------------------------------------------
     | Application Environment
