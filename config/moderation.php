@@ -32,4 +32,14 @@ return [
 
     // Distinct reporters needed before a guest is auto-banned
     'report_threshold' => (int) env('REPORT_THRESHOLD', 3),
+
+    /*
+     * Message retention (chats:prune-messages). Messages are deleted this many
+     * minutes after their chat ends. Chats with an unresolved report keep their
+     * messages until the report is resolved, or until the hard limit in days.
+     * The landing page promises the 60-minute default; update its copy if you
+     * change these.
+     */
+    'message_retention_minutes' => (int) env('MESSAGE_RETENTION_MINUTES', 60),
+    'reported_message_retention_days' => (int) env('REPORTED_MESSAGE_RETENTION_DAYS', 30),
 ];
