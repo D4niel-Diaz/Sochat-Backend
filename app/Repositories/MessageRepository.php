@@ -54,9 +54,20 @@ class MessageRepository
 
     public function getFlaggedMessages(): Collection
     {
+        // The review queue: flagged messages an admin hasn't looked at yet
         return Message::where('is_flagged', true)
+            ->whereNull('reviewed_at')
             ->with(['chat:chat_id,guest_id_1,guest_id_2', 'sender:guest_id,ip_address'])
             ->orderBy('created_at', 'desc')
             ->get();
+    }
+
+    /** Mark a flagged message reviewed so retention can delete it. */
+    public function markReviewed(int $messageId): bool
+    {
+        return Message::where('message_id', $messageId)
+            ->where('is_flagged', true)
+            ->whereNull('reviewed_at')
+            ->update(['reviewed_at' => now()]) > 0;
     }
 }

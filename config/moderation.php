@@ -36,7 +36,8 @@ return [
     /*
      * Message retention (chats:prune-messages). Messages are deleted this many
      * minutes after their chat ends. Chats with an unresolved report keep their
-     * messages until the report is resolved, or until the hard limit in days.
+     * messages until the report is resolved, and flagged messages are kept until
+     * an admin marks them reviewed; either way, at most the hard limit in days.
      * The landing page promises the 60-minute default; update its copy if you
      * change these.
      */

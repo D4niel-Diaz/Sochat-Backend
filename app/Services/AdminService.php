@@ -76,4 +76,9 @@ class AdminService
     {
         return $this->messageRepository->getFlaggedMessages()->toArray();
     }
+
+    public function reviewFlaggedMessage(int $messageId): bool
+    {
+        return $this->messageRepository->markReviewed($messageId);
+    }
 }

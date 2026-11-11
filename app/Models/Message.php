@@ -20,11 +20,12 @@ class Message extends Model
 
     protected $primaryKey = 'message_id';
 
-    protected $fillable = ['chat_id', 'sender_guest_id', 'content', 'is_flagged'];
+    protected $fillable = ['chat_id', 'sender_guest_id', 'content', 'is_flagged', 'reviewed_at'];
 
     protected $casts = [
         'created_at' => 'datetime',
         'is_flagged' => 'boolean',
+        'reviewed_at' => 'datetime',
     ];
 
     public function chat()
