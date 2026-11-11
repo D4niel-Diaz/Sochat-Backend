@@ -11,26 +11,20 @@ class ContentFilter
 {
     public function handle(Request $request, Closure $next): Response
     {
-        if ($request->has('content') || $request->has('message')) {
-            $content = $request->input('content') ?? $request->input('message');
+        $content = $request->input('content');
 
-            // Only filter if content is not null
-            if ($content !== null && $content !== '') {
-                $filteredContent = $this->filterContent($content);
+        if (is_string($content) && $content !== '') {
+            $filteredContent = $this->filterContent($content);
 
-                if ($filteredContent !== $content) {
-                    $request->merge([
-                        'content' => $filteredContent,
-                        'message' => $filteredContent,
-                    ]);
-                }
+            if ($filteredContent !== $content) {
+                $request->merge(['content' => $filteredContent]);
+            }
 
-                if ($this->detectPersonalInfo($filteredContent)) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Message contains personal information and cannot be sent',
-                    ], 400);
-                }
+            if ($this->detectPersonalInfo($filteredContent)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Message contains personal information and cannot be sent',
+                ], 400);
             }
         }
 
@@ -39,24 +33,20 @@ class ContentFilter
 
     protected function filterContent(string $content): string
     {
-        $bannedWords = Config::get('moderation.banned_words', []);
-        $filtered = $content;
-
-        foreach ($bannedWords as $word) {
-            $filtered = str_ireplace($word, str_repeat('*', strlen($word)), $filtered);
+        foreach (Config::get('moderation.banned_words', []) as $word) {
+            $content = preg_replace_callback(
+                '/\b' . preg_quote($word, '/') . '\b/iu',
+                fn ($m) => str_repeat('*', mb_strlen($m[0])),
+                $content
+            );
         }
 
-        return $filtered;
+        return $content;
     }
 
     protected function detectPersonalInfo(string $content): bool
     {
-        $patterns = Config::get('moderation.personal_info_patterns', [
-            '/\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/', 
-            '/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/',
-        ]);
-
-        foreach ($patterns as $pattern) {
+        foreach (Config::get('moderation.personal_info_patterns', []) as $pattern) {
             if (preg_match($pattern, $content)) {
                 return true;
             }

@@ -5,8 +5,6 @@ namespace App\Http\Controllers;
 use App\Repositories\GuestRepository;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\ValidationException;
 
 class GuestController extends Controller
 {
@@ -16,8 +14,7 @@ class GuestController extends Controller
 
     public function create(Request $request): JsonResponse
     {
-        $ipAddress = $request->ip();
-        $guest = $this->guestRepository->create($ipAddress);
+        $guest = $this->guestRepository->create($request->ip());
 
         return response()->json([
             'success' => true,
@@ -30,37 +27,27 @@ class GuestController extends Controller
         ], 201);
     }
 
+    /**
+     * Read-only session check (the auth.guest middleware has already rejected
+     * missing, invalid, banned and expired tokens). Does not extend the session.
+     */
+    public function validate(Request $request): JsonResponse
+    {
+        $guest = $request->attributes->get('guest');
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'guest_id' => $guest->guest_id,
+                'status' => $guest->status,
+                'expires_at' => $guest->expires_at?->toIso8601String(),
+            ],
+        ]);
+    }
+
     public function refresh(Request $request): JsonResponse
     {
-        $sessionToken = $request->bearerToken();
-        if (!$sessionToken) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Session token required',
-            ], 401);
-        }
-
-        $guest = $this->guestRepository->findBySessionToken($sessionToken);
-        if (!$guest) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Invalid session',
-            ], 401);
-        }
-
-        if ($guest->isBanned()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Session has been banned',
-            ], 403);
-        }
-
-        if ($guest->expires_at && $guest->expires_at->isPast()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Session expired',
-            ], 401);
-        }
+        $guest = $request->attributes->get('guest');
 
         $guest->update(['expires_at' => now()->addHours(24)]);
 

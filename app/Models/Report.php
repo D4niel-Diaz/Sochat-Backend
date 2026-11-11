@@ -5,6 +5,17 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
+/**
+ * @property int $report_id
+ * @property int $chat_id
+ * @property string $reporter_guest_id
+ * @property string $reported_guest_id
+ * @property string $reason
+ * @property string|null $ip_address
+ * @property string $status pending|reviewing|resolved
+ * @property \Illuminate\Support\Carbon|null $created_at
+ * @property \Illuminate\Support\Carbon|null $updated_at
+ */
 class Report extends Model
 {
     use HasFactory;
@@ -19,7 +30,7 @@ class Report extends Model
 
     public function chat()
     {
-        return $this->belongsTo(Chat::class);
+        return $this->belongsTo(Chat::class, 'chat_id', 'chat_id');
     }
 
     public function reporter()

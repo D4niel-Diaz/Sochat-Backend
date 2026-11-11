@@ -9,6 +9,11 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // Postgres-only; other drivers are handled by 2026_11_10_000001_normalize_guest_status.
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            return;
+        }
+
         // PostgreSQL doesn't support altering enum types directly
         // Get the actual enum type name from the database
         $enumTypeName = DB::select("
@@ -52,6 +57,11 @@ return new class extends Migration
 
     public function down(): void
     {
+        // Postgres-only; other drivers are handled by 2026_11_10_000001_normalize_guest_status.
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            return;
+        }
+
         // Update idle guests back to waiting before changing enum
         DB::statement("
             UPDATE guests

@@ -7,12 +7,13 @@ use Illuminate\Database\Eloquent\Collection;
 
 class MessageRepository
 {
-    public function create(int $chatId, string $senderGuestId, string $content): Message
+    public function create(int $chatId, string $senderGuestId, string $content, bool $isFlagged = false): Message
     {
         return Message::create([
             'chat_id' => $chatId,
             'sender_guest_id' => $senderGuestId,
             'content' => $content,
+            'is_flagged' => $isFlagged,
         ]);
     }
 
@@ -24,32 +25,26 @@ class MessageRepository
     public function getMessagesByChatId(int $chatId, int $limit = 100): Collection
     {
         return Message::where('chat_id', $chatId)
-            ->with('sender')
-            ->orderBy('created_at', 'asc')
+            ->orderBy('message_id', 'asc')
             ->limit($limit)
             ->get();
     }
 
-    public function getMessagesPaginated(int $chatId, int $limit = 50, ?string $cursor = null): Collection
+    /**
+     * Newest first. Uses message_id as the cursor: created_at has one-second
+     * precision, so a timestamp cursor skips messages sent in the same second.
+     */
+    public function getMessagesPaginated(int $chatId, int $limit = 50, ?int $cursor = null): Collection
     {
         $query = Message::where('chat_id', $chatId)
-            ->with('sender')
-            ->orderBy('created_at', 'desc')
+            ->orderBy('message_id', 'desc')
             ->limit($limit + 1);
 
         if ($cursor) {
-            $query->where('created_at', '<', $cursor);
+            $query->where('message_id', '<', $cursor);
         }
 
         return $query->get();
-    }
-
-    public function getRecentMessages(int $limit = 50): Collection
-    {
-        return Message::with(['chat', 'sender'])
-            ->orderBy('created_at', 'desc')
-            ->limit($limit)
-            ->get();
     }
 
     public function flagMessage(int $messageId): bool
@@ -63,15 +58,5 @@ class MessageRepository
             ->with(['chat:chat_id,guest_id_1,guest_id_2', 'sender:guest_id,ip_address'])
             ->orderBy('created_at', 'desc')
             ->get();
-    }
-
-    public function deleteOldMessages(int $hours = 24): int
-    {
-        return Message::where('created_at', '<', now()->subHours($hours))->delete();
-    }
-
-    public function countMessagesByChatId(int $chatId): int
-    {
-        return Message::where('chat_id', $chatId)->count();
     }
 }

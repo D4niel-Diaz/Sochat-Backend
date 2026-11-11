@@ -12,6 +12,7 @@ class ChatRepository
         return Chat::create([
             'guest_id_1' => $guestId1,
             'guest_id_2' => $guestId2,
+            'started_at' => now(),
             'status' => 'active',
         ]);
     }
@@ -31,38 +32,12 @@ class ChatRepository
             ->first();
     }
 
-    public function endChat(int $chatId, string $endedBy): bool
-    {
-        $chat = $this->findById($chatId);
-        if (!$chat) {
-            return false;
-        }
-        $chat->end($endedBy);
-        return true;
-    }
-
     public function getActiveChats(): Collection
     {
+        // guests has no "id" column; its primary key is guest_id
         return Chat::active()
-            ->with(['guest1:id,guest_id,ip_address,status', 'guest2:id,guest_id,ip_address,status'])
+            ->with(['guest1:guest_id,ip_address,status,expires_at', 'guest2:guest_id,ip_address,status,expires_at'])
             ->orderBy('created_at', 'desc')
-            ->get();
-    }
-
-    public function getChatsByGuestId(string $guestId): Collection
-    {
-        return Chat::where('guest_id_1', $guestId)
-            ->orWhere('guest_id_2', $guestId)
-            ->with(['guest1', 'guest2', 'messages'])
-            ->orderBy('created_at', 'desc')
-            ->get();
-    }
-
-    public function getRecentChats(int $limit = 50): Collection
-    {
-        return Chat::with(['guest1', 'guest2'])
-            ->orderBy('created_at', 'desc')
-            ->limit($limit)
             ->get();
     }
 

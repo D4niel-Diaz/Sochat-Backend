@@ -42,9 +42,12 @@ return new class extends Migration
 
         // Add a trigger to prevent self-matching
         // Drop existing trigger first to avoid conflicts
-        DB::unprepared('DROP TRIGGER IF EXISTS prevent_self_matching ON chats');
-
         $driver = DB::connection()->getDriverName();
+
+        // "ON <table>" is PostgreSQL-only syntax
+        DB::unprepared($driver === 'pgsql'
+            ? 'DROP TRIGGER IF EXISTS prevent_self_matching ON chats'
+            : 'DROP TRIGGER IF EXISTS prevent_self_matching');
 
         if ($driver === 'mysql') {
             DB::unprepared('
@@ -92,11 +95,13 @@ return new class extends Migration
     {
         // Drop the partial unique constraint (only if it exists)
         if (DB::connection()->getDriverName() !== 'mysql') {
-            DB::statement('DROP INDEX IF EXISTS unique_active_chat_pair ON chats');
+            DB::statement('DROP INDEX IF EXISTS unique_active_chat_pair');
         }
 
         // Drop the self-matching trigger
-        DB::unprepared('DROP TRIGGER IF EXISTS prevent_self_matching ON chats');
+        DB::unprepared(DB::connection()->getDriverName() === 'pgsql'
+            ? 'DROP TRIGGER IF EXISTS prevent_self_matching ON chats'
+            : 'DROP TRIGGER IF EXISTS prevent_self_matching');
 
         // Restore the original unique constraint
         Schema::table('chats', function (Blueprint $table) {

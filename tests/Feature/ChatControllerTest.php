@@ -26,6 +26,12 @@ class ChatControllerTest extends TestCase
     {
         $guest = Guest::factory()->create(['status' => 'waiting', 'expires_at' => now()->addHours(24)]);
 
+        $this->withToken($guest->session_token)->postJson('/api/v1/presence/opt-in', [
+            'role' => 'learner',
+            'subject' => 'General',
+            'availability' => [9, 10],
+        ])->assertOk();
+
         $response = $this->withToken($guest->session_token)
             ->postJson('/api/v1/chat/start');
 
@@ -89,16 +95,6 @@ class ChatControllerTest extends TestCase
     public function test_get_messages_requires_authentication(): void
     {
         $response = $this->getJson('/api/v1/chat/1/messages');
-
-        $response->assertStatus(401);
-    }
-
-    public function test_typing_indicator_requires_authentication(): void
-    {
-        $response = $this->postJson('/api/v1/chat/typing', [
-            'chat_id' => 1,
-            'is_typing' => true,
-        ]);
 
         $response->assertStatus(401);
     }

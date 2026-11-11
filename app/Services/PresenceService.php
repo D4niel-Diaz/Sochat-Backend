@@ -81,23 +81,6 @@ class PresenceService
             ->exists();
     }
 
-    public function getWaitingUsers(?string $role = null, ?string $subject = null): array
-    {
-        $query = DB::table('presence')
-            ->where('is_waiting', true)
-            ->where('is_online', true)
-            ->where('expires_at', '>', now());
-
-        if ($role !== null) {
-            $query->where('role', $role);
-        }
-        if ($subject !== null) {
-            $query->where('subject', $subject);
-        }
-
-        return $query->pluck('guest_id')->toArray();
-    }
-
     public function countWaitingUsers(?string $role = null, ?string $subject = null): int
     {
         $query = DB::table('presence')
@@ -115,31 +98,12 @@ class PresenceService
         return $query->count();
     }
 
-    public function getOnlineUsers(): array
-    {
-        return DB::table('presence')
-            ->where('is_online', true)
-            ->where('expires_at', '>', now())
-            ->pluck('guest_id')
-            ->toArray();
-    }
-
     public function countOnlineUsers(): int
     {
         return DB::table('presence')
             ->where('is_online', true)
             ->where('expires_at', '>', now())
             ->count();
-    }
-
-    public function refreshPresence(string $guestId): void
-    {
-        DB::table('presence')
-            ->where('guest_id', $guestId)
-            ->update([
-                'last_seen_at' => now(),
-                'expires_at' => now()->addSeconds(self::TTL_SECONDS),
-            ]);
     }
 
     public function cleanupStaleUsers(): int

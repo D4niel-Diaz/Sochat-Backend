@@ -2,18 +2,15 @@
 
 namespace App\Http\Controllers;
 
-use App\Repositories\GuestRepository;
 use App\Repositories\ChatRepository;
 use App\Services\ReportService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\ValidationException;
 
 class ReportController extends Controller
 {
     public function __construct(
-        private GuestRepository $guestRepository,
         private ChatRepository $chatRepository,
         private ReportService $reportService
     ) {}
@@ -33,23 +30,9 @@ class ReportController extends Controller
             ], 422);
         }
 
-        $sessionToken = $request->bearerToken();
-        if (!$sessionToken) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Session token required',
-            ], 401);
-        }
+        $guest = $request->attributes->get('guest');
 
-        $guest = $this->guestRepository->findBySessionToken($sessionToken);
-        if (!$guest) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Invalid session',
-            ], 401);
-        }
-
-        $chat = $this->chatRepository->findById($request->input('chat_id'));
+        $chat = $this->chatRepository->findById((int) $request->input('chat_id'));
         if (!$chat || !$chat->isParticipant($guest->guest_id)) {
             return response()->json([
                 'success' => false,
@@ -72,6 +55,13 @@ class ReportController extends Controller
             $request->input('reason'),
             $request->ip()
         );
+
+        if (!$result) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You have already reported this chat',
+            ], 409);
+        }
 
         return response()->json([
             'success' => true,

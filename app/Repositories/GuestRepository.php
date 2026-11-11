@@ -26,42 +26,6 @@ class GuestRepository
         return Guest::where('guest_id', $guestId)->first();
     }
 
-    public function findActiveByGuestId(string $guestId): ?Guest
-    {
-        return Guest::where('guest_id', $guestId)->active()->first();
-    }
-
-    public function findWaitingGuest(): ?Guest
-    {
-        return Guest::waiting()
-            ->where('status', '!=', 'banned')
-            ->where('status', '!=', 'idle')
-            ->orderBy('created_at', 'asc')
-            ->first();
-    }
-
-    public function findWaitingGuestExcluding(string $excludeGuestId): ?Guest
-    {
-        return Guest::waiting()
-            ->where('guest_id', '!=', $excludeGuestId)
-            ->where('status', '!=', 'banned')
-            ->where('status', '!=', 'idle')
-            ->where('expires_at', '>', now())
-            ->orderBy('updated_at', 'asc')
-            ->lockForUpdate()
-            ->first();
-    }
-
-    public function countWaitingGuestsExcluding(string $excludeGuestId): int
-    {
-        return Guest::waiting()
-            ->where('guest_id', '!=', $excludeGuestId)
-            ->where('status', '!=', 'banned')
-            ->where('status', '!=', 'idle')
-            ->where('expires_at', '>', now())
-            ->count();
-    }
-
     public function updateStatus(string $guestId, string $status): bool
     {
         return Guest::where('guest_id', $guestId)
@@ -79,13 +43,13 @@ class GuestRepository
         return Guest::where('guest_id', $guestId)->where('status', 'banned')->update(['status' => 'idle', 'updated_at' => now()]) > 0;
     }
 
-    public function deleteExpired(): int
-    {
-        return Guest::where('expires_at', '<', now())->delete();
-    }
-
     public function getBannedGuests(): Collection
     {
-        return Guest::banned()->get();
+        return Guest::banned()->orderBy('updated_at', 'desc')->get();
+    }
+
+    public function countBannedGuests(): int
+    {
+        return Guest::banned()->count();
     }
 }
