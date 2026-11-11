@@ -15,9 +15,15 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // Deployed behind Render's load balancer: trust its X-Forwarded-* headers
-        // so $request->ip() is the client's address, not the proxy's.
-        $middleware->trustProxies(at: '*');
+        // Deployed behind Render's load balancer: trust X-Forwarded-* only when the
+        // request comes from a proxy on a private/loopback network, so
+        // $request->ip() is the client's real address. Trusting '*' let any client
+        // pick its own IP with a forged X-Forwarded-For header and bypass per-IP
+        // rate limits. Override with TRUSTED_PROXIES (comma-separated IPs/CIDRs).
+        $middleware->trustProxies(at: array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('TRUSTED_PROXIES', '127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7'))
+        ))));
 
         $middleware->alias([
             'auth.guest' => \App\Http\Middleware\AuthGuest::class,

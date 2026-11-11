@@ -23,7 +23,8 @@ class AppServiceProvider extends ServiceProvider
             ? 'guest:' . hash('sha256', $request->bearerToken())
             : 'ip:' . $request->ip();
 
-        RateLimiter::for('guest-create', fn (Request $request) => Limit::perMinute(20)->by($request->ip()));
+        // Per IP, so it must allow a whole classroom behind one campus NAT address
+        RateLimiter::for('guest-create', fn (Request $request) => Limit::perMinute((int) config('app.guest_create_per_minute', 60))->by($request->ip()));
         RateLimiter::for('guest-api', fn (Request $request) => Limit::perMinute(120)->by($byGuest($request)));
         RateLimiter::for('presence', fn (Request $request) => Limit::perMinute(60)->by($byGuest($request)));
         // The WebSocket server retries /chat/start every 2s (30/min) while a guest waits

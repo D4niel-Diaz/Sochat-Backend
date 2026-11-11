@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Exceptions\MatchClaimFailed;
 use App\Repositories\GuestRepository;
 use App\Repositories\ChatRepository;
 use Illuminate\Support\Facades\DB;
@@ -81,93 +82,69 @@ class ChatService
             $availability = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18]; // Default availability
         }
 
-        // STEP 6: Find and lock available match from presence waiting pool
-        // CRITICAL: Use atomic operation with FOR UPDATE to prevent race conditions
-        // NOTE: Matching works for any role combination (simplified for anonymous chat)
-        $partnerGuestId = null;
-        
+        // STEP 6: Read candidates without locks, then claim the pair atomically
+        // (claimPair). Locking candidate rows here is not enough: two requests
+        // (A looking at B, B looking at A) lock different rows and both create a
+        // chat. NOTE: any role combination matches (simplified anonymous chat).
+        // Called every couple of seconds per waiting user by the WebSocket
+        // server, so no per-attempt logging here.
         try {
-            $partnerGuestId = DB::transaction(function () use ($guestId, $subject, $availability) {
-                // Get waiting users with matching criteria and row-level locking
-                // Use case-insensitive subject matching
-                // "General" subject matches with any subject
-                // Match any role (simplified matching)
-                $waitingUsers = DB::table('presence')
-                    ->where('is_waiting', true)
-                    ->where('is_online', true)
-                    ->where('expires_at', '>', now())
-                    ->where(function($query) use ($subject) {
-                        // Match if subjects are the same (case-insensitive)
-                        // OR if either subject is "General" (General matches with any)
-                        $query->where(function($q) use ($subject) {
-                            $q->whereRaw('LOWER(subject) = LOWER(?)', [$subject]);
-                        })->orWhere('subject', 'General')
-                          ->orWhereRaw('LOWER(?) = LOWER(subject)', ['General']);
-                    })
-                    ->where('guest_id', '!=', $guestId)
-                    ->orderBy('last_seen_at', 'asc')
-                    ->lockForUpdate()
-                    ->get();
+            $candidates = DB::table('presence')
+                ->where('is_waiting', true)
+                ->where('is_online', true)
+                ->where('expires_at', '>', now())
+                ->where(function ($query) use ($subject) {
+                    // Same subject (case-insensitive), or either side is "General"
+                    $query->whereRaw('LOWER(subject) = LOWER(?)', [$subject])
+                        ->orWhere('subject', 'General')
+                        ->orWhereRaw('LOWER(?) = LOWER(subject)', ['General']);
+                })
+                ->where('guest_id', '!=', $guestId)
+                ->orderBy('last_seen_at', 'asc')
+                ->limit(20)
+                ->get();
 
-                // Called every couple of seconds per waiting user by the WebSocket
-                // server, so no per-attempt logging or extra debug queries here.
-                if ($waitingUsers->isEmpty()) {
-                    return null;
+            foreach ($candidates as $candidate) {
+                $candidateAvailability = json_decode($candidate->availability, true) ?? [];
+                if (empty(array_intersect($availability, $candidateAvailability))) {
+                    continue;
                 }
 
-                // Find first valid partner with availability overlap
-                foreach ($waitingUsers as $candidate) {
-                    $candidateAvailability = json_decode($candidate->availability, true) ?? [];
-                    
-                    // CRITICAL: Check availability overlap
-                    $overlap = array_intersect($availability, $candidateAvailability);
-                    if (empty($overlap)) {
-                        continue;
-                    }
-
-                    $potentialPartnerId = $candidate->guest_id;
-                    $partnerGuest = $this->guestRepository->findByGuestId($potentialPartnerId);
-
-                    // Skip if partner is invalid or banned
-                    if (!$partnerGuest || $partnerGuest->isBanned()) {
-                        $this->presenceService->removeFromWaitingPool($potentialPartnerId);
-                        Log::warning('Invalid partner found, removed from pool', ['partner_guest_id' => $potentialPartnerId]);
-                        continue;
-                    }
-
-                    // CRITICAL: Check if partner is still online and in waiting pool
-                    if (!$this->presenceService->isUserOnline($potentialPartnerId) ||
-                        !$this->presenceService->isInWaitingPool($potentialPartnerId)) {
-                        $this->presenceService->removeFromWaitingPool($potentialPartnerId);
-                        Log::info('Partner no longer available, removed from pool', ['partner_guest_id' => $potentialPartnerId]);
-                        continue;
-                    }
-
-                    // CRITICAL: Check if partner already has an active chat
-                    $partnerExistingChat = $this->chatRepository->findActiveByGuestId($potentialPartnerId);
-                    if ($partnerExistingChat) {
-                        $this->presenceService->removeFromWaitingPool($potentialPartnerId);
-                        Log::info('Partner already in active chat, removed from pool', [
-                            'partner_guest_id' => $potentialPartnerId,
-                            'chat_id' => $partnerExistingChat->chat_id
-                        ]);
-                        continue;
-                    }
-
-                    // Found a valid partner with matching criteria
-                    Log::info('Valid partner found with matching criteria', [
-                        'guest_id' => $guestId,
-                        'partner_guest_id' => $potentialPartnerId,
-                        'subject' => $subject,
-                        'availability_overlap' => $overlap
-                    ]);
-                    return $potentialPartnerId;
+                $partnerGuestId = $candidate->guest_id;
+                $partnerGuest = $this->guestRepository->findByGuestId($partnerGuestId);
+                if (!$partnerGuest || $partnerGuest->isBanned()) {
+                    $this->presenceService->removeFromWaitingPool($partnerGuestId);
+                    Log::warning('Invalid partner found, removed from pool', ['partner_guest_id' => $partnerGuestId]);
+                    continue;
                 }
 
-                return null;
-            });
+                $chat = $this->claimPair($guestId, $partnerGuestId);
+                if ($chat) {
+                    return [
+                        'chat_id' => $chat->chat_id,
+                        'partner_id' => $partnerGuestId,
+                        'status' => 'matched',
+                        'started_at' => $chat->started_at->toISOString(),
+                        'message' => 'You have been matched!'
+                    ];
+                }
+
+                // Claim lost. If a concurrent request matched *us*, hand that chat back.
+                $existingChat = $this->chatRepository->findActiveByGuestId($guestId);
+                if ($existingChat) {
+                    return [
+                        'chat_id' => $existingChat->chat_id,
+                        'partner_id' => $existingChat->getPartnerId($guestId),
+                        'status' => 'already_matched',
+                    ];
+                }
+                if (!$this->presenceService->isInWaitingPool($guestId)) {
+                    break; // opted out meanwhile
+                }
+                // Otherwise the candidate was taken; try the next one.
+            }
         } catch (\Throwable $e) {
-            Log::error('Error during partner selection', [
+            Log::error('Error during matching', [
                 'guest_id' => $guestId,
                 'error' => $e->getMessage()
             ]);
@@ -177,55 +154,50 @@ class ChatService
             ];
         }
 
-        if (!$partnerGuestId) {
-            // Return appropriate message based on role
-            $message = $role === 'learner' 
-                ? 'No available tutor online for this subject. Please try again later.'
-                : 'No available learner online for this subject. Please try again later.';
+        $message = $role === 'learner'
+            ? 'No available tutor online for this subject. Please try again later.'
+            : 'No available learner online for this subject. Please try again later.';
 
-            return [
-                'status' => 'waiting',
-                'available_users' => 0,
-                'message' => $message
-            ];
-        }
+        return [
+            'status' => 'waiting',
+            'available_users' => 0,
+            'message' => $message
+        ];
+    }
 
-        // STEP 6: Match confirmed - create chat with transaction and proper locking
+    /**
+     * Atomically take both guests out of the waiting pool and create their chat.
+     *
+     * The conditional UPDATE is the lock: concurrent requests touching the same
+     * presence row wait for each other, and the loser re-checks is_waiting after
+     * the winner commits (MySQL, Postgres and SQLite all behave this way), so it
+     * updates fewer than 2 rows and rolls back. A guest can therefore never be
+     * claimed by two chats. Deadlocks between crossing claims are retried.
+     */
+    private function claimPair(string $guestId, string $partnerGuestId): ?\App\Models\Chat
+    {
         try {
-            $chat = DB::transaction(function () use ($guestId, $partnerGuestId) {
-                // Final verification: both users must still be in waiting pool
-                if (!$this->presenceService->isInWaitingPool($guestId) || 
-                    !$this->presenceService->isInWaitingPool($partnerGuestId)) {
-                    Log::info('One or both users opted out during transaction', [
-                        'guest_id' => $guestId,
-                        'partner_guest_id' => $partnerGuestId
-                    ]);
-                    throw new \Exception('Users opted out during transaction');
+            return DB::transaction(function () use ($guestId, $partnerGuestId) {
+                $claimed = DB::table('presence')
+                    ->whereIn('guest_id', [$guestId, $partnerGuestId])
+                    ->where('is_waiting', true)
+                    ->where('is_online', true)
+                    ->where('expires_at', '>', now())
+                    ->update(['is_waiting' => false]);
+
+                if ($claimed !== 2) {
+                    throw new MatchClaimFailed();
                 }
 
-                // CRITICAL: Check if a chat already exists for either user (prevent duplicates)
-                $existingChat1 = $this->chatRepository->findActiveByGuestId($guestId);
-                $existingChat2 = $this->chatRepository->findActiveByGuestId($partnerGuestId);
-                if ($existingChat1 || $existingChat2) {
-                    Log::info('Chat already created by concurrent request', [
-                        'guest_id' => $guestId,
-                        'partner_guest_id' => $partnerGuestId,
-                        'existing_chat_1' => $existingChat1?->chat_id,
-                        'existing_chat_2' => $existingChat2?->chat_id
-                    ]);
-                    throw new \Exception('Chat already exists');
+                // Defensive: opt-in already refuses guests who are in a chat
+                if ($this->chatRepository->findActiveByGuestId($guestId) ||
+                    $this->chatRepository->findActiveByGuestId($partnerGuestId)) {
+                    throw new MatchClaimFailed();
                 }
 
-                // Create the chat
                 $chat = $this->chatRepository->create($guestId, $partnerGuestId);
-                
-                // Update both users' status to active
                 $this->guestRepository->updateStatus($guestId, 'active');
                 $this->guestRepository->updateStatus($partnerGuestId, 'active');
-                
-                // Remove both from waiting pool (they're now matched)
-                $this->presenceService->removeFromWaitingPool($guestId);
-                $this->presenceService->removeFromWaitingPool($partnerGuestId);
 
                 Log::info('Chat created successfully', [
                     'chat_id' => $chat->chat_id,
@@ -234,26 +206,9 @@ class ChatService
                 ]);
 
                 return $chat;
-            });
-
-            return [
-                'chat_id' => $chat->chat_id,
-                'partner_id' => $chat->getPartnerId($guestId),
-                'status' => 'matched',
-                'started_at' => $chat->started_at->toISOString(),
-                'message' => 'You have been matched!'
-            ];
-
-        } catch (\Throwable $e) {
-            Log::error('Failed to create chat', [
-                'guest_id' => $guestId,
-                'error' => $e->getMessage()
-            ]);
-            
-            return [
-                'status' => 'waiting',
-                'message' => 'Failed to create match. Please try again.'
-            ];
+            }, 3);
+        } catch (MatchClaimFailed) {
+            return null;
         }
     }
 
