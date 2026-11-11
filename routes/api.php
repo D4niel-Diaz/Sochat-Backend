@@ -47,5 +47,6 @@ Route::prefix('v1')->group(function () {
         Route::post('/report/resolve', [AdminController::class, 'resolveReport']);
         Route::get('/banned-guests', [AdminController::class, 'getBannedGuests']);
         Route::get('/flagged-messages', [AdminController::class, 'getFlaggedMessages']);
+        Route::post('/flagged-messages/review', [AdminController::class, 'reviewFlaggedMessage']);
     });
 });

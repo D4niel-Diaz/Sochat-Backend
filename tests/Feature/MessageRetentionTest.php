@@ -9,8 +9,11 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 
 uses(RefreshDatabase::class);
 
-/** A chat with two messages; `endedAgo` null = still active. */
-function chatWithMessages(?\DateInterval $endedAgo, ?string $reportStatus = null): Chat
+/**
+ * A chat with two normal messages; `endedAgo` null = still active.
+ * `$flagged` adds a flagged message: "unreviewed" or "reviewed".
+ */
+function chatWithMessages(?\DateInterval $endedAgo, ?string $reportStatus = null, ?string $flagged = null): Chat
 {
     $guests = app(GuestRepository::class);
     $guest1 = $guests->create('127.0.0.1');
@@ -22,6 +25,16 @@ function chatWithMessages(?\DateInterval $endedAgo, ?string $reportStatus = null
             'chat_id' => $chat->chat_id,
             'sender_guest_id' => $guest->guest_id,
             'content' => 'hello',
+        ]);
+    }
+
+    if ($flagged) {
+        Message::create([
+            'chat_id' => $chat->chat_id,
+            'sender_guest_id' => $guest2->guest_id,
+            'content' => 'add me @someone',
+            'is_flagged' => true,
+            'reviewed_at' => $flagged === 'reviewed' ? now() : null,
         ]);
     }
 
@@ -88,4 +101,61 @@ test('deletes reported chat messages after the hard limit', function () {
     $this->artisan('chats:prune-messages')->assertSuccessful();
 
     expect(messageCount($stale))->toBe(0);
+});
+
+test('keeps unreviewed flagged messages, deletes the rest of the chat', function () {
+    $chat = chatWithMessages(new DateInterval('PT2H'), null, 'unreviewed');
+
+    $this->artisan('chats:prune-messages')->assertSuccessful();
+
+    $left = Message::where('chat_id', $chat->chat_id)->get();
+    expect($left)->toHaveCount(1);
+    expect($left->first()->is_flagged)->toBeTrue();
+});
+
+test('deletes flagged messages once reviewed', function () {
+    $chat = chatWithMessages(new DateInterval('PT2H'), null, 'reviewed');
+
+    $this->artisan('chats:prune-messages')->assertSuccessful();
+
+    expect(messageCount($chat))->toBe(0);
+});
+
+test('deletes unreviewed flagged messages after the hard limit', function () {
+    $chat = chatWithMessages(new DateInterval('P31D'), null, 'unreviewed');
+
+    $this->artisan('chats:prune-messages')->assertSuccessful();
+
+    expect(messageCount($chat))->toBe(0);
+});
+
+test('admins can mark a flagged message reviewed, which removes it from the queue', function () {
+    $chat = chatWithMessages(new DateInterval('PT2H'), null, 'unreviewed');
+    $flagged = Message::where('chat_id', $chat->chat_id)->where('is_flagged', true)->first();
+    $normal = Message::where('chat_id', $chat->chat_id)->where('is_flagged', false)->first();
+    $token = adminToken($this);
+
+    $this->withToken($token)->getJson('/api/v1/admin/flagged-messages')
+        ->assertOk()->assertJsonCount(1, 'data');
+
+    $this->withToken($token)->postJson('/api/v1/admin/flagged-messages/review', ['message_id' => $normal->message_id])
+        ->assertStatus(400);
+    $this->withToken($token)->postJson('/api/v1/admin/flagged-messages/review', ['message_id' => $flagged->message_id])
+        ->assertOk();
+    $this->withToken($token)->postJson('/api/v1/admin/flagged-messages/review', ['message_id' => $flagged->message_id])
+        ->assertStatus(400);
+
+    $this->withToken($token)->getJson('/api/v1/admin/flagged-messages')
+        ->assertOk()->assertJsonCount(0, 'data');
+});
+
+test('guests cannot mark flagged messages reviewed', function () {
+    $chat = chatWithMessages(null, null, 'unreviewed');
+    $flagged = Message::where('chat_id', $chat->chat_id)->where('is_flagged', true)->first();
+    $guest = app(GuestRepository::class)->create('127.0.0.9');
+
+    $this->withToken($guest->session_token)
+        ->postJson('/api/v1/admin/flagged-messages/review', ['message_id' => $flagged->message_id])
+        ->assertStatus(401);
+    expect($flagged->fresh()->reviewed_at)->toBeNull();
 });

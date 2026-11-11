@@ -153,4 +153,31 @@ class AdminController extends Controller
             'data' => $messages,
         ]);
     }
+
+    public function reviewFlaggedMessage(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'message_id' => 'required|integer|exists:messages,message_id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()->toArray(),
+            ], 422);
+        }
+
+        if (!$this->adminService->reviewFlaggedMessage((int) $request->input('message_id'))) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Message is not flagged or was already reviewed',
+            ], 400);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Message marked as reviewed',
+        ]);
+    }
 }

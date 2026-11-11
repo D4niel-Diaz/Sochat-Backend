@@ -17,23 +17,17 @@ class PruneChatMessages extends Command
         $cutoff = now()->subMinutes(config('moderation.message_retention_minutes', 60));
         $hardCutoff = now()->subDays(config('moderation.reported_message_retention_days', 30));
 
-        // Ended chats past retention, unless a report is still open (admins need
-        // the messages to review it). Past the hard limit, delete regardless.
-        $query = Chat::query()
-            ->where('status', 'ended')
-            ->whereNotNull('ended_at')
-            ->where(function ($q) use ($cutoff, $hardCutoff) {
-                $q->where(function ($q) use ($cutoff) {
-                    $q->where('ended_at', '<=', $cutoff)
-                        ->whereDoesntHave('reports', fn ($r) => $r->where('status', '!=', 'resolved'));
-                })->orWhere('ended_at', '<=', $hardCutoff);
-            })
-            ->whereHas('messages');
+        // Ended chats past retention with no open report (admins need those to
+        // review it). Flagged messages nobody has reviewed yet are kept too.
+        $deleted = $this->deleteMessages(
+            $this->endedChats()
+                ->where('ended_at', '<=', $cutoff)
+                ->whereDoesntHave('reports', fn ($r) => $r->where('status', '!=', 'resolved')),
+            fn ($q) => $q->where(fn ($q) => $q->where('is_flagged', false)->orWhereNotNull('reviewed_at'))
+        );
 
-        $deleted = 0;
-        $query->select('chat_id')->chunkById(500, function ($chats) use (&$deleted) {
-            $deleted += Message::whereIn('chat_id', $chats->pluck('chat_id'))->delete();
-        }, 'chat_id');
+        // Past the hard limit everything goes, reviewed or not
+        $deleted += $this->deleteMessages($this->endedChats()->where('ended_at', '<=', $hardCutoff));
 
         if ($deleted > 0) {
             Log::info('Pruned chat messages', ['deleted' => $deleted]);
@@ -41,5 +35,27 @@ class PruneChatMessages extends Command
         $this->info("Deleted {$deleted} messages from ended chats.");
 
         return Command::SUCCESS;
+    }
+
+    private function endedChats()
+    {
+        return Chat::query()->where('status', 'ended')->whereNotNull('ended_at');
+    }
+
+    /** Delete the matching messages of every chat in $chats; returns how many. */
+    private function deleteMessages($chats, ?callable $scope = null): int
+    {
+        $deleted = 0;
+        $chats->whereHas('messages', fn ($q) => $scope ? $scope($q) : $q)
+            ->select('chat_id')
+            ->chunkById(500, function ($batch) use ($scope, &$deleted) {
+                $query = Message::whereIn('chat_id', $batch->pluck('chat_id'));
+                if ($scope) {
+                    $scope($query);
+                }
+                $deleted += $query->delete();
+            }, 'chat_id');
+
+        return $deleted;
     }
 }
